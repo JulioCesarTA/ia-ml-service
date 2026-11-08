@@ -1,0 +1,64 @@
+.env
+.env.local
+*.log
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Java / Maven
+target/
+*.class
+.mvn/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# PHP / Laravel
+vendor/
+storage/logs/
+storage/framework/cache/
+storage/framework/sessions/
+storage/framework/views/
+bootstrap/cache/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes locales
+.docker-data/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# K8s secrets reales
+*secrets*.yaml
+!*secrets.example.yaml
+.env.secrets
+.env.cloud
+.phpunit.result.cache
+
+.env.cloud.nuevo
+
+.comedor-app.keys.tmp
+
+CREDENCIALES.local.md
+
+respaldo/
+
+deploy/ec2/realm/

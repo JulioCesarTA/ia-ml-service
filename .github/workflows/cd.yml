@@ -1,0 +1,35 @@
+name: cd
+# Secretos: AWS_DEPLOY_ROLE, AWS_ACCOUNT_ID, INFRA_REPO_TOKEN (token con lectura del repositorio comedor-infra)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: JulioCesarTA/comedor-infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra-repo
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Build & push
+        run: |
+          IMG=${{ steps.ecr.outputs.registry }}/ia-ml-service:${{ github.sha }}
+          docker build -t $IMG .
+          docker push $IMG
+      - name: kubectl apply
+        run: |
+          aws eks update-kubeconfig --name eks-comedor --region us-east-1
+          export ECR_REGISTRY=${{ steps.ecr.outputs.registry }}
+          export IMAGE_TAG=${{ github.sha }}
+          export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+          envsubst < infra-repo/infra/k8s/aws/ia-ml-service/deployment.yaml | kubectl apply -f -
