@@ -25,6 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Docker aislado (cada runner con su propia sesión)
+        run: |
+          DC="$RUNNER_TEMP/docker"; DCU="$(cygpath -u "$DC")"
+          mkdir -p "$DCU" && cp -r ~/.docker/. "$DCU/" 2>/dev/null || true
+          [ -f "$DCU/config.json" ] && sed -i '/credsStore/d;/credHelpers/d' "$DCU/config.json" || echo '{}' > "$DCU/config.json"
+          echo "DOCKER_CONFIG=$DC" >> "$GITHUB_ENV"
       - name: Login en GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
