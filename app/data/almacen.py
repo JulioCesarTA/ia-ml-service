@@ -61,6 +61,13 @@ def _iniciar() -> None:
         cols = [r["name"] for r in c.execute("PRAGMA table_info(outbox)")]
         if "chat_id" not in cols:                      # base creada antes de que hubiera varios destinatarios
             c.execute("ALTER TABLE outbox ADD COLUMN chat_id TEXT")
+        for tabla in ("ref_porcion", "bandejas"):      # fotos en S3 y registros hechos desde el celular
+            existentes = [r["name"] for r in c.execute(f"PRAGMA table_info({tabla})")]
+            for col, tipo in (("foto_key", "TEXT"), ("origen", "TEXT DEFAULT 'servidor'"), ("cliente_id", "TEXT")):
+                if col not in existentes:
+                    c.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {tipo}")
+            # un mismo registro enviado dos veces (reintento sin conexión) no se duplica ni se pisa
+            c.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{tabla}_cliente ON {tabla}(cliente_id) WHERE cliente_id IS NOT NULL")
 
 
 _iniciar()

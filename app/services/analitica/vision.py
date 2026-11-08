@@ -15,12 +15,13 @@ Es una estimación por área visible: funciona mejor con fotos tomadas desde arr
 """
 import io
 import os
+import re
 import uuid
 
 import numpy as np
 from PIL import Image
 
-from app.data import repo_vision
+from app.data import repo_vision, s3_fotos
 
 REJ = 56                       # zonas por lado (mapa 56x56)
 LADO = 224
@@ -93,11 +94,16 @@ def _otsu(v: np.ndarray) -> tuple[float, float]:
     return umbral, max(0.0, mejor) / total
 
 
-def _guardar_foto(carpeta: str, fid: str, img: Image.Image) -> None:
+def _guardar_foto(carpeta: str, fid: str, img: Image.Image, fecha_iso: str | None = None) -> str | None:
+    """Guarda la foto en el disco y, si S3 está configurado, también allá. Devuelve la clave en S3 (o None)."""
     os.makedirs(os.path.join(_dir(), carpeta), exist_ok=True)
     chica = img.copy()
     chica.thumbnail((900, 900))
     chica.save(os.path.join(_dir(), carpeta, f"{fid}.jpg"), quality=85)
+    clave = s3_fotos.clave_foto(carpeta, fid, fecha_iso)
+    buf = io.BytesIO()
+    chica.save(buf, format="JPEG", quality=85)
+    return clave if s3_fotos.subir(clave, buf.getvalue()) else None
 
 
 def ruta_foto(carpeta: str, fid: str) -> str | None:
@@ -140,8 +146,8 @@ def registrar_referencia(data: bytes, plato_id: str, fecha: str, turno: str) -> 
     f_ref = float(comida.mean())
     rid = uuid.uuid4().hex[:10]
     np.savez(os.path.join(_dir(), f"{rid}.npz"), comida=p_comida, fondo=p_fondo)
-    _guardar_foto("ref", rid, img)
-    repo_vision.guardar_referencia(rid, plato_id, fecha, turno, f_ref, adv)
+    foto_key = _guardar_foto("ref", rid, img, fecha)
+    repo_vision.guardar_referencia(rid, plato_id, fecha, turno, f_ref, adv, foto_key=foto_key)
     return {"id": rid, "platoId": plato_id, "fecha": fecha, "turno": turno, "zonasComida": int(comida.sum()),
             "fraccionComida": round(f_ref, 3), "advertencia": adv, "mascara": comida.reshape(REJ, REJ).astype(int).tolist(),
             "modelo": nombre_modelo()}
@@ -164,9 +170,9 @@ def analizar_bandeja(data: bytes, ref_id: str) -> dict:
     es_comida = _alisar(es_comida)
     restante = float(min(100.0, 100.0 * es_comida.mean() / r["f_ref"])) if r["f_ref"] > 0 else 0.0
     bid = uuid.uuid4().hex[:10]
-    _guardar_foto("bandeja", bid, img)
+    foto_key = _guardar_foto("bandeja", bid, img, r["fecha"])
     repo_vision.guardar_bandeja(bid, ref_id, r["plato_id"], r["fecha"], r["turno"],
-                                round(restante, 1), round(100 - restante, 1), round(confianza, 2))
+                                round(restante, 1), round(100 - restante, 1), round(confianza, 2), foto_key=foto_key)
     return {"id": bid, "refId": ref_id, "platoId": r["plato_id"], "restantePct": round(restante, 1), "comidoPct": round(100 - restante, 1),
             "confianza": round(confianza, 2), "mascara": es_comida.reshape(REJ, REJ).astype(int).tolist()}
 
@@ -180,3 +186,99 @@ def resumen() -> dict:
 
 def desperdicio_medio_por_plato() -> dict[str, float]:
     return repo_vision.restante_medio_por_plato(3)
+
+
+# ----------------------------- celular: IA local + fotos en S3 -----------------------------
+# El celular analiza la bandeja sin internet con su propia copia de la CNN (TensorFlow Lite) y las referencias que descargó.
+# Cuando hay red sube la foto directo a S3 (URL temporal) y manda aquí solo el resultado y la clave de la foto.
+
+DIM = 147                                           # 144 características de la CNN + 3 de color
+TURNOS_VALIDOS = ("DESAYUNO", "ALMUERZO", "CENA")
+_ID_CLIENTE = re.compile(r"^[A-Za-z0-9\-]{8,64}$")
+
+
+def _validar_id_cliente(cid: str) -> str:
+    if not isinstance(cid, str) or not _ID_CLIENTE.match(cid):
+        raise ValueError("cliente_id inválido (8-64 letras, números o guiones)")
+    return cid
+
+
+def paquete_movil(limite: int = 60) -> dict:
+    """Referencias (prototipos de comida y de plato) para que el celular analice bandejas sin conexión."""
+    refs = []
+    for r in repo_vision.referencias(limite):
+        ruta = os.path.join(_dir(), f"{r['id']}.npz")
+        if not os.path.exists(ruta):
+            continue
+        p = np.load(ruta)
+        refs.append({"id": r["id"], "platoId": r["plato_id"], "fecha": r["fecha"], "turno": r["turno"], "fRef": round(r["f_ref"], 4),
+                     "comida": np.round(p["comida"], 4).tolist(), "fondo": np.round(p["fondo"], 4).tolist()})
+    return {"dim": DIM, "rejilla": REJ, "lado": LADO, "capa": CAPA, "pesoColor": PESO_COLOR, "referencias": refs}
+
+
+def _prototipos_validos(v, nombre: str) -> np.ndarray:
+    a = np.asarray(v, dtype=np.float64)
+    if a.ndim != 2 or a.shape[1] != DIM or not 1 <= a.shape[0] <= 8 or not np.isfinite(a).all():
+        raise ValueError(f"«{nombre}» debe ser una lista de 1 a 8 vectores de {DIM} números")
+    return a.astype(np.float32)
+
+
+def url_subida(tipo: str, cliente_id: str, fecha_iso: str | None = None) -> dict:
+    if tipo not in ("ref", "bandeja"):
+        raise ValueError("tipo debe ser «ref» o «bandeja»")
+    clave = s3_fotos.clave_foto(tipo, _validar_id_cliente(cliente_id), fecha_iso)
+    return {"clave": clave, "url": s3_fotos.url_subida(clave), "metodo": "PUT",
+            "encabezados": {"Content-Type": "image/jpeg", "x-amz-server-side-encryption": "AES256"}, "expira": 600}
+
+
+def _clave_confirmada(clave, carpeta: str) -> str | None:
+    """Acepta la clave de S3 solo si es del tipo esperado y el objeto realmente existe."""
+    if not clave or not isinstance(clave, str) or not clave.startswith("referencias/" if carpeta == "ref" else "bandejas/"):
+        return None
+    return clave if s3_fotos.existe(clave) else None
+
+
+def registrar_referencia_movil(p: dict) -> dict:
+    cid = _validar_id_cliente(p.get("cliente_id"))
+    previo = repo_vision.por_cliente("ref_porcion", cid)
+    if previo:                                       # ya llegó (reintento): se devuelve lo guardado, no se duplica
+        return {"id": previo["id"], "repetido": True}
+    if p.get("turno") not in TURNOS_VALIDOS:
+        raise ValueError("turno inválido")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(p.get("fecha", ""))):
+        raise ValueError("fecha inválida (AAAA-MM-DD)")
+    plato = str(p.get("plato_id", "")).strip()
+    if not plato or len(plato) > 80:
+        raise ValueError("plato_id inválido")
+    f_ref = float(p.get("f_ref", 0))
+    if not 0 < f_ref <= 1:
+        raise ValueError("f_ref debe estar entre 0 y 1")
+    comida, fondo = _prototipos_validos(p.get("comida"), "comida"), _prototipos_validos(p.get("fondo"), "fondo")
+    rid = uuid.uuid4().hex[:10]
+    np.savez(os.path.join(_dir(), f"{rid}.npz"), comida=comida, fondo=fondo)
+    repo_vision.guardar_referencia(rid, plato, p["fecha"], p["turno"], f_ref, p.get("advertencia"),
+                                   foto_key=_clave_confirmada(p.get("foto_key"), "ref"), origen="movil", cliente_id=cid)
+    return {"id": rid, "repetido": False}
+
+
+def registrar_bandeja_movil(p: dict) -> dict:
+    cid = _validar_id_cliente(p.get("cliente_id"))
+    previo = repo_vision.por_cliente("bandejas", cid)
+    if previo:
+        return {"id": previo["id"], "repetido": True}
+    r = repo_vision.referencia(str(p.get("ref_id", "")))
+    if r is None:
+        raise LookupError("La referencia no existe en el servidor (¿aún no se sincronizó?)")
+    restante, confianza = float(p.get("restante", -1)), float(p.get("confianza", -1))
+    if not (0 <= restante <= 100) or not (0 <= confianza <= 1):
+        raise ValueError("restante debe estar entre 0 y 100 y confianza entre 0 y 1")
+    bid = uuid.uuid4().hex[:10]
+    repo_vision.guardar_bandeja(bid, r["id"], r["plato_id"], r["fecha"], r["turno"], round(restante, 1), round(100 - restante, 1),
+                                round(confianza, 2), foto_key=_clave_confirmada(p.get("foto_key"), "bandeja"), origen="movil", cliente_id=cid)
+    return {"id": bid, "repetido": False}
+
+
+def url_foto(carpeta: str, fid: str) -> str | None:
+    """URL temporal de la foto en S3 si existe allá (las fotos nuevas viven en S3)."""
+    clave = repo_vision.foto_key(carpeta, fid) if carpeta in ("ref", "bandeja") and fid.isalnum() else None
+    return s3_fotos.url_lectura(clave) if clave else None

@@ -11,9 +11,26 @@ def directorio_fotos() -> str:
     return d
 
 
-def guardar_referencia(rid: str, plato_id: str, fecha: str, turno: str, f_ref: float, advertencia: str) -> None:
+def guardar_referencia(rid: str, plato_id: str, fecha: str, turno: str, f_ref: float, advertencia: str | None,
+                       foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None:
     with transaccion() as c:
-        c.execute("INSERT INTO ref_porcion VALUES(?,?,?,?,?,?,?)", (rid, plato_id, fecha, turno, time.time(), f_ref, advertencia))
+        c.execute("INSERT INTO ref_porcion(id,plato_id,fecha,turno,creado,f_ref,advertencia,foto_key,origen,cliente_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                  (rid, plato_id, fecha, turno, time.time(), f_ref, advertencia, foto_key, origen, cliente_id))
+
+
+def por_cliente(tabla: str, cliente_id: str) -> dict | None:
+    """Registro ya guardado con ese id de cliente (para que reenviar no duplique)."""
+    assert tabla in ("ref_porcion", "bandejas")
+    with transaccion() as c:
+        r = c.execute(f"SELECT * FROM {tabla} WHERE cliente_id=?", (cliente_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def foto_key(carpeta: str, fid: str) -> str | None:
+    tabla = "ref_porcion" if carpeta == "ref" else "bandejas"
+    with transaccion() as c:
+        r = c.execute(f"SELECT foto_key FROM {tabla} WHERE id=?", (fid,)).fetchone()
+        return r["foto_key"] if r else None
 
 
 def referencias(limite: int) -> list[dict]:
@@ -28,10 +45,11 @@ def referencia(ref_id: str) -> dict | None:
 
 
 def guardar_bandeja(bid: str, ref_id: str, plato_id: str, fecha: str, turno: str,
-                    restante: float, comido: float, confianza: float) -> None:
+                    restante: float, comido: float, confianza: float,
+                    foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None:
     with transaccion() as c:
-        c.execute("INSERT INTO bandejas VALUES(?,?,?,?,?,?,?,?,?)",
-                  (bid, ref_id, plato_id, fecha, turno, time.time(), restante, comido, confianza))
+        c.execute("INSERT INTO bandejas(id,ref_id,plato_id,fecha,turno,creado,restante,comido,confianza,foto_key,origen,cliente_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (bid, ref_id, plato_id, fecha, turno, time.time(), restante, comido, confianza, foto_key, origen, cliente_id))
 
 
 def resumen_bandejas() -> dict:

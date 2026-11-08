@@ -6,7 +6,8 @@ import time
 from datetime import date
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from pydantic import BaseModel
 from app.models.predicciones import DemandaIn
 from app.services.analitica import agrupamiento, clima, datos, kpis, regresion, vision
 from app.services.reportes import fuentes
@@ -101,6 +102,72 @@ def vision_resumen():
 @router.get("/vision/foto/{carpeta}/{fid}")
 def vision_foto(carpeta: str, fid: str):
     ruta = vision.ruta_foto(carpeta, fid)
-    if not ruta:
-        raise HTTPException(404, "Foto no encontrada")
-    return FileResponse(ruta, media_type="image/jpeg")
+    if ruta:
+        return FileResponse(ruta, media_type="image/jpeg")
+    url = vision.url_foto(carpeta, fid)                  # ya no está en el disco: se sirve desde S3
+    if url:
+        return RedirectResponse(url, status_code=307)
+    raise HTTPException(404, "Foto no encontrada")
+
+
+# ----------------------------- celular: IA local (TensorFlow Lite) + fotos en S3 -----------------------------
+class SubidaIn(BaseModel):
+    tipo: str                       # ref | bandeja
+    cliente_id: str
+    fecha: str | None = None
+
+
+class ReferenciaMovilIn(BaseModel):
+    cliente_id: str
+    plato_id: str
+    fecha: str
+    turno: str
+    f_ref: float
+    comida: list[list[float]]
+    fondo: list[list[float]]
+    foto_key: str | None = None
+    advertencia: str | None = None
+
+
+class BandejaMovilIn(BaseModel):
+    cliente_id: str
+    ref_id: str
+    restante: float
+    confianza: float
+    foto_key: str | None = None
+
+
+def _movil(fn, datos):
+    try:
+        return fn(datos)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/vision/paquete-movil")
+def vision_paquete_movil(limite: int = 60):
+    """Referencias para analizar bandejas en el celular sin conexión."""
+    return vision.paquete_movil(min(max(limite, 1), 200))
+
+
+@router.post("/vision/subida")
+def vision_subida(body: SubidaIn):
+    """URL temporal para que el celular suba la foto directo a S3."""
+    try:
+        return vision.url_subida(body.tipo, body.cliente_id, body.fecha)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/vision/referencia-movil")
+def vision_referencia_movil(body: ReferenciaMovilIn):
+    return _movil(vision.registrar_referencia_movil, body.model_dump())
+
+
+@router.post("/vision/bandeja-movil")
+def vision_bandeja_movil(body: BandejaMovilIn):
+    return _movil(vision.registrar_bandeja_movil, body.model_dump())
