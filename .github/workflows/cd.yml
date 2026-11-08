@@ -38,7 +38,7 @@ jobs:
       - name: Construir y subir la imagen
         run: |
           OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
-          IMG=ghcr.io/$OWNER/ia-ml-service
+          IMG=ghcr.io/$OWNER/comedor-ia-ml
           docker build -t $IMG:latest -t $IMG:${{ github.sha }} --label org.opencontainers.image.source=https://github.com/${{ github.repository }} .
           docker push $IMG:latest
           docker push $IMG:${{ github.sha }}
