@@ -1,35 +1,47 @@
 name: cd
-# Secretos: AWS_DEPLOY_ROLE, AWS_ACCOUNT_ID, INFRA_REPO_TOKEN (token con lectura del repositorio comedor-infra)
+# Al hacer commit en main: construye la imagen EN EL PC (runner propio, usa el caché de Docker), la sube a GHCR
+# y reinicia el servicio en su servidor por SSH. Requiere el runner encendido (Escritorio\iniciar-runners.bat) y Docker Desktop abierto.
+# Secretos del repositorio: SSH_HOST, SSH_USER, SSH_KEY
 on:
   workflow_dispatch:
   push:
     branches: [main]
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: cd
+  cancel-in-progress: true
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions: { id-token: write, contents: read }
+  desplegar:
+    runs-on: [self-hosted, pc-julio]
+    defaults:
+      run:
+        shell: C:/gitbash/bin/bash.exe --noprofile --norc -e -o pipefail {0}
+    env:
+      SSH_KEY: ${{ secrets.SSH_KEY }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: JulioCesarTA/comedor-infra
-          token: ${{ secrets.INFRA_REPO_TOKEN }}
-          path: infra-repo
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE }}
-          aws-region: us-east-1
-      - uses: aws-actions/amazon-ecr-login@v2
-        id: ecr
-      - name: Build & push
+
+      - name: Login en GHCR
         run: |
-          IMG=${{ steps.ecr.outputs.registry }}/ia-ml-service:${{ github.sha }}
-          docker build -t $IMG .
-          docker push $IMG
-      - name: kubectl apply
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Construir y subir la imagen
         run: |
-          aws eks update-kubeconfig --name eks-comedor --region us-east-1
-          export ECR_REGISTRY=${{ steps.ecr.outputs.registry }}
-          export IMAGE_TAG=${{ github.sha }}
-          export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
-          envsubst < infra-repo/infra/k8s/aws/ia-ml-service/deployment.yaml | kubectl apply -f -
+          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
+          IMG=ghcr.io/$OWNER/ia-ml-service
+          docker build -t $IMG:latest -t $IMG:${{ github.sha }} --label org.opencontainers.image.source=https://github.com/${{ github.repository }} .
+          docker push $IMG:latest
+          docker push $IMG:${{ github.sha }}
+
+      - name: Desplegar por SSH
+        run: |
+          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
+          printf '%s\n' "$SSH_KEY" > key && chmod 600 key
+          SSH="ssh -i key -o StrictHostKeyChecking=no -o ConnectTimeout=20 $SSH_USER@$SSH_HOST"
+          echo "${{ secrets.GITHUB_TOKEN }}" | $SSH "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
+          $SSH "cd ~/comedor && docker compose --env-file .env --env-file .env.secrets --env-file .env.ec2 -f docker-compose.yml -f docker-compose.ec2.yml pull ia-ml-service && docker compose --env-file .env --env-file .env.secrets --env-file .env.ec2 -f docker-compose.yml -f docker-compose.ec2.yml up -d --no-deps ia-ml-service && docker image prune -f >/dev/null"
+          rm -f key
