@@ -53,6 +53,14 @@ def check_and_lock_idempotency(key: str, response_cache: dict | None = None) -> 
         raise
 
 
+def save_idempotency_response(key: str, response: dict) -> None:
+    """Guarda la respuesta final de una operación para que un reintento con la misma clave la reciba tal cual."""
+    _client().put_item(
+        TableName=IDEMPOTENCY_TABLE,
+        Item={"idempotencyKey": {"S": key}, "cachedResponse": {"S": __import__("json").dumps(response)}},
+    )
+
+
 def put_saga(saga_id: str, data: dict):
     c = _client()
     import json

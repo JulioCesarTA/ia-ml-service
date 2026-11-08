@@ -17,6 +17,9 @@ class CancelarReq(BaseModel):
     reserva_id: str
     pago_id: str
     idempotency_key: str
+    menu_id: str | None = None
+    plato_id: str | None = None
+    saga_id: str | None = None  # saga de la reserva: de ahí se deducen menu_id y plato_id si faltan
 
 
 class ConfirmarPagoReq(BaseModel):

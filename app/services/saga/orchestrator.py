@@ -58,7 +58,7 @@ class SagaOrchestrator:
                        "reservaId": reserva_id, "pagoId": pago["pagoId"],
                        "ticketId": pago["ticketId"], "qr": None,
                        "stripe": pago.get("stripe")}
-                dynamo_client.check_and_lock_idempotency(p["idempotency_key"], out)
+                dynamo_client.save_idempotency_response(p["idempotency_key"], out)
                 return out
 
             # Paso 4: confirmar reserva + emitir QR (beca / efectivo)
@@ -73,7 +73,7 @@ class SagaOrchestrator:
                    "reservaId": reserva_id, "pagoId": pago["pagoId"],
                    "ticketId": pago["ticketId"], "qr": conf.get("qr"),
                    "stripe": None}
-            dynamo_client.check_and_lock_idempotency(p["idempotency_key"], out)
+            dynamo_client.save_idempotency_response(p["idempotency_key"], out)
             return out
 
         except Exception as e:
@@ -101,6 +101,10 @@ class SagaOrchestrator:
         estado = {"sagaId": saga_id, "step": 0, "status": "RUNNING",
                   "payload": p, "started_at": datetime.utcnow().isoformat()}
         dynamo_client.put_saga(saga_id, estado)
+        if p.get("saga_id") and not (p.get("menu_id") and p.get("plato_id")):
+            origen = (dynamo_client.get_saga(p["saga_id"]) or {}).get("payload", {})
+            p["menu_id"] = p.get("menu_id") or origen.get("menu_id")
+            p["plato_id"] = p.get("plato_id") or origen.get("plato_id")
         srv.devolver_pago(p["pago_id"])
         estado["step"] = 1; dynamo_client.put_saga(saga_id, estado)
         # Liberar porción: necesitamos menuId/platoId del evento; en MVP se pasa en payload si se tiene
