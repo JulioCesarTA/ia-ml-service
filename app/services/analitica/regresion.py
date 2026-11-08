@@ -17,18 +17,14 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold, LeaveOneOut, cross_val_predict
 
 from app.services.analitica import clima, datos
+from app.services.analitica.calendario import FERIADOS, PERIODOS_EXAMENES, PERIODOS_VACACIONES
 
-MIN_MUESTRAS = 10
+MIN_MUESTRAS = 2000          # registros (fecha × turno × plato) mínimos para entrenar
 NOMBRES = ["dia_sem", "turno", "cupo", "feriado", "examenes", "vacacion", "temperatura", "popularidad_plato"]
 ETIQUETAS = {"dia_sem": "Día de la semana", "turno": "Turno", "cupo": "Cupo ofrecido", "feriado": "Feriado",
              "examenes": "Período de exámenes", "vacacion": "Vacaciones", "temperatura": "Temperatura",
              "popularidad_plato": "Popularidad del plato"}
 TURNO_IDX = {"DESAYUNO": 0, "ALMUERZO": 1, "CENA": 2}
-
-# Calendario académico y feriados (configuración, no datos de demanda)
-PERIODOS_EXAMENES = [(date(2026, 6, 15), date(2026, 6, 30)), (date(2026, 11, 15), date(2026, 11, 30))]
-PERIODOS_VACACIONES = [(date(2026, 7, 10), date(2026, 7, 25)), (date(2026, 12, 20), date(2027, 2, 1))]
-FERIADOS = {date(2026, 1, 1), date(2026, 1, 22), date(2026, 5, 1), date(2026, 8, 6), date(2026, 11, 2), date(2026, 12, 25)}
 
 _lock = threading.Lock()
 _modelo: dict = {"firma": None, "dato": None}
@@ -72,8 +68,11 @@ def _entrenar() -> dict:
                         temps.get(x["fecha"]), temp_defecto) for x in pasadas], dtype=float)
     y = np.array([x["apartadas"] for x in pasadas], dtype=float)
 
-    # Con pocos datos un bosque pequeño y poco profundo sobreajusta menos
-    rf = RandomForestRegressor(n_estimators=200, max_depth=3, min_samples_leaf=4, max_features=0.5, random_state=0)
+    # Con pocos datos un bosque pequeño y poco profundo sobreajusta menos; con miles de registros puede ser más profundo
+    if len(y) >= 500:
+        rf = RandomForestRegressor(n_estimators=150, max_depth=9, min_samples_leaf=5, max_features=0.6, random_state=0, n_jobs=-1)
+    else:
+        rf = RandomForestRegressor(n_estimators=200, max_depth=3, min_samples_leaf=4, max_features=0.5, random_state=0)
     cv = LeaveOneOut() if len(y) <= 120 else KFold(5, shuffle=True, random_state=0)
     pred_cv = cross_val_predict(rf, X, y, cv=cv)
     mae = float(np.mean(np.abs(pred_cv - y)))
@@ -98,6 +97,13 @@ def _entrenar() -> dict:
         "serie": [{"fecha": f, "real": round(v[0]), "predicha": round(v[1], 1)} for f, v in sorted(por_dia.items())],
         "conDemanda": int((y > 0).sum()),
     }
+
+
+def reentrenar() -> dict:
+    """Fuerza un nuevo entrenamiento ahora mismo (sin esperar a que cambien los datos)."""
+    with _lock:
+        _modelo.update(firma=None, dato=None)
+    return estado()
 
 
 def _obtener() -> dict:

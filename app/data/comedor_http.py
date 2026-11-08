@@ -29,6 +29,13 @@ def menus_semana(turno: str, inicio: str | None = None) -> list[dict]:
     return r.json() if r.status_code == 200 else []
 
 
+def menus_historial(desde: str, hasta: str) -> list[dict]:
+    """Todos los menús (todos los turnos) entre dos fechas, en una sola llamada. Lanza excepción si el servicio no lo ofrece."""
+    r = httpx.get(f"{url('menu')}/menus/historial", params={"desde": desde, "hasta": hasta}, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
 def publicar_menu(fecha: str, turno: str, platos: list[dict]) -> bool:
     r = httpx.post(f"{url('menu')}/menus", json={"fecha": fecha, "turno": turno, "platos": platos}, timeout=15)
     return r.status_code < 300

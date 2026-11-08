@@ -23,6 +23,8 @@ def sin_red(monkeypatch):
     monkeypatch.setattr(clima, "disponible", lambda: False)
     monkeypatch.setattr(datos, "fuente_ok", lambda: True)
     monkeypatch.setattr(regresion, "_modelo", {"firma": None, "dato": None})
+    monkeypatch.setattr(regresion, "MIN_MUESTRAS", 10)            # las pruebas chicas usan pocos datos; el mínimo real (2000) se prueba abajo
+    monkeypatch.setattr(agrupamiento, "MIN_REGISTROS", 1)
 
 
 def _con(monkeypatch, filas):
@@ -70,3 +72,47 @@ def test_agrupamiento_separa_platos_populares_de_los_ignorados(monkeypatch, sin_
 def test_agrupamiento_con_pocos_platos(monkeypatch, sin_red):
     _con(monkeypatch, _filas(1)[:2])
     assert agrupamiento.calcular()["suficiente"] is False
+
+
+def _tres_anios(n_dias=1100):
+    """3 años de menús con patrón real: más demanda lunes-miércoles, menos viernes/sábado, plato 0 más popular."""
+    hoy = date.today()
+    out = []
+    for i in range(n_dias):
+        d = hoy - timedelta(days=n_dias - i)
+        if d.weekday() == 6:
+            continue
+        for turno in ("DESAYUNO", "ALMUERZO", "CENA"):
+            for p in range(2 if turno == "ALMUERZO" else 1):
+                base = {"DESAYUNO": 6, "ALMUERZO": 18, "CENA": 8}[turno] - 5 * p
+                dia = (1.2, 1.2, 1.1, 1.0, 0.8, 0.5)[d.weekday()]
+                out.append({"fecha": d.isoformat(), "turno": turno, "platoId": f"plato-{turno[0]}{p}", "cupo": 40,
+                            "apartadas": max(0, round(base * dia))})
+    return out
+
+
+def test_minimo_2000_registros_para_entrenar(monkeypatch, sin_red):
+    monkeypatch.setattr(regresion, "MIN_MUESTRAS", 2000)
+    _con(monkeypatch, _filas(14))                      # 42 registros: no alcanza
+    e = regresion.estado()
+    assert e["suficiente"] is False and "2000" in e["mensaje"]
+
+
+def test_prediccion_con_tres_anios_de_datos(monkeypatch, sin_red):
+    monkeypatch.setattr(regresion, "MIN_MUESTRAS", 2000)
+    filas = _tres_anios()
+    assert len(filas) >= 2000
+    _con(monkeypatch, filas)
+    e = regresion.estado()
+    assert e["suficiente"] and e["muestras"] >= 2000
+    assert e["metricas"]["confiable"] is True and e["metricas"]["validacion"] == "5-fold"
+
+
+def test_agrupamiento_exige_2000_registros(monkeypatch, sin_red):
+    monkeypatch.setattr(agrupamiento, "MIN_REGISTROS", 2000)
+    monkeypatch.setattr(agrupamiento, "_desperdicio_por_plato", lambda: {})
+    _con(monkeypatch, _filas(14))
+    assert agrupamiento.calcular()["suficiente"] is False
+    _con(monkeypatch, _tres_anios())
+    r = agrupamiento.calcular()
+    assert r["suficiente"] and r["registros"] >= 2000

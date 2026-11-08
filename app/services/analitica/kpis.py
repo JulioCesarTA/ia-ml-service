@@ -154,6 +154,22 @@ def _insumos() -> dict:
                 "ok" if n == 0 else "alerta" if n <= max(1, len(i) // 4) else "critico", meta, {"items": items})
 
 
+MIN_REGISTROS = 2000
+
+
+def _registros() -> dict:
+    """Cuántos registros reales usan los KPI (menús, reservas y pagos) y si alcanzan el mínimo."""
+    out = {"minimo": MIN_REGISTROS}
+    for nombre, dataset in (("menus", "menus"), ("reservas", "reservas"), ("pagos", "pagos")):
+        try:
+            out[nombre] = int(len(fuentes.cargar(dataset)))
+        except Exception:
+            out[nombre] = 0
+    out["total"] = out["menus"] + out["reservas"] + out["pagos"]
+    out["suficiente"] = all(out[n] >= MIN_REGISTROS for n in ("menus", "reservas", "pagos"))
+    return out
+
+
 def calcular() -> dict:
     hoy = pd.Timestamp(date.today())
     calculadores = [lambda: _ocupacion(hoy), lambda: _ingresos(hoy), lambda: _volumen(hoy), _cancelacion,
@@ -164,4 +180,4 @@ def calcular() -> dict:
             kpis.append(f())
         except Exception as e:                      # un servicio caído no tumba a los demás indicadores
             kpis.append(_kpi("error", "No disponible", None, "", f"No pude calcularlo: {str(e)[:100]}", "sin_datos", ""))
-    return {"generado": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"), "kpis": kpis}
+    return {"generado": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"), "kpis": kpis, "registros": _registros()}

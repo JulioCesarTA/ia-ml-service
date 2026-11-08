@@ -12,8 +12,9 @@ from datetime import date, timedelta
 from app.data import comedor_http
 
 TURNOS = ("DESAYUNO", "ALMUERZO", "CENA")
-SEMANAS_ATRAS = 12
+SEMANAS_ATRAS = 12        # solo se usa si el servicio de menús aún no ofrece el historial por rango
 SEMANAS_ADELANTE = 2
+ANIOS_HISTORIAL = 3       # los modelos usan hasta 3 años de historial
 
 _lock = threading.Lock()
 _cache: dict = {"t": 0.0, "filas": [], "ok": False}
@@ -31,15 +32,31 @@ def _pedir(par: tuple[date, str]) -> list[dict]:
         return []
 
 
+def _historial() -> list[dict]:
+    """Menús de los últimos 3 años (+ próximas semanas) en una sola llamada; si el servicio es antiguo, semana por semana."""
+    hoy = date.today()
+    try:
+        return comedor_http.menus_historial((hoy - timedelta(days=365 * ANIOS_HISTORIAL + 1)).isoformat(),
+                                            (hoy + timedelta(weeks=SEMANAS_ADELANTE)).isoformat())
+    except Exception:
+        inicio = _lunes(hoy) - timedelta(weeks=SEMANAS_ATRAS)
+        pares = [(inicio + timedelta(weeks=i), t) for i in range(SEMANAS_ATRAS + SEMANAS_ADELANTE + 1) for t in TURNOS]
+        with ThreadPoolExecutor(8) as ex:
+            return [m for lista in ex.map(_pedir, pares) for m in lista]
+
+
+def invalidar() -> None:
+    """Olvida lo guardado para que la próxima lectura vaya al servicio de menús."""
+    with _lock:
+        _cache["t"] = 0.0
+
+
 def filas(ttl: float = 15.0) -> list[dict]:
     """Una fila por (fecha, turno, plato): cupo total y porciones apartadas (suma si hay menús repetidos)."""
     with _lock:
         if time.time() - _cache["t"] < ttl:
             return _cache["filas"]
-    inicio = _lunes(date.today()) - timedelta(weeks=SEMANAS_ATRAS)
-    pares = [(inicio + timedelta(weeks=i), t) for i in range(SEMANAS_ATRAS + SEMANAS_ADELANTE + 1) for t in TURNOS]
-    with ThreadPoolExecutor(8) as ex:
-        menus = [m for lista in ex.map(_pedir, pares) for m in lista]
+    menus = _historial()
     if not menus:                                   # el servicio no respondió: se conserva lo último que se tenía
         with _lock:
             _cache["ok"] = False

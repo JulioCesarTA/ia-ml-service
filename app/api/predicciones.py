@@ -2,12 +2,14 @@
   - Regresión (supervisado): raciones esperadas por plato, turno y día.
   - Clustering (no supervisado): agrupación de platos (mantener / ajustar / retirar).
   - Deep Learning (TensorFlow): porcentaje que se comió cada persona respecto a la porción de referencia."""
+import time
 from datetime import date
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from app.models.predicciones import DemandaIn
-from app.services.analitica import agrupamiento, datos, kpis, regresion, vision
+from app.services.analitica import agrupamiento, clima, datos, kpis, regresion, vision
+from app.services.reportes import fuentes
 
 router = APIRouter()
 
@@ -22,6 +24,28 @@ def demanda(body: DemandaIn):
 @router.get("/regresion")
 def regresion_estado():
     return regresion.estado()
+
+
+# ----------------------------- ejecutar ahora (con o sin internet) -----------------------------
+@router.post("/reentrenar")
+def reentrenar_ahora():
+    """Recalcula YA los tres tableros: vuelve a leer los datos, reentrena el modelo y reagrupa los platos.
+
+    Con internet actualiza también el clima; sin internet usa el último clima guardado (o ninguno) y el resto
+    funciona igual, porque los datos salen de los servicios del comedor, no de internet.
+    """
+    t0 = time.time()
+    datos.invalidar()
+    fuentes.invalidar()
+    internet = clima.actualizar()
+    est = regresion.reentrenar()
+    grupos = agrupamiento.calcular()
+    ind = kpis.calcular()
+    return {"ok": True, "segundos": round(time.time() - t0, 1), "internet": internet,
+            "clima": "actualizado desde internet" if internet else "sin internet: se usó el último clima guardado",
+            "prediccion": {"registros": est.get("muestras"), "entrenado": bool(est.get("metricas")), "minimo": est.get("minimo")},
+            "agrupacion": {"registros": grupos.get("registros"), "platos": grupos.get("platos"), "suficiente": grupos.get("suficiente")},
+            "kpi": ind.get("registros")}
 
 
 # ----------------------------- indicadores clave -----------------------------

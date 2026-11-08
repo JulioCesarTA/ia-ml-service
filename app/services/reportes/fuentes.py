@@ -13,6 +13,7 @@ from app.data import comedor_http, repo_vision
 
 TZ = "America/La_Paz"
 TTL = 10.0
+TTL_GRANDES = 60.0          # reservas y pagos pueden ser miles de filas: se leen una vez por minuto
 _lock = threading.Lock()
 _cache: dict[str, tuple[float, pd.DataFrame]] = {}
 
@@ -142,10 +143,15 @@ CARGADORES = {"reservas": _reservas, "pagos": _pagos, "estudiantes": _estudiante
               "menus": _menus, "insumos": _insumos, "desperdicio": _desperdicio}
 
 
+def invalidar() -> None:
+    with _lock:
+        _cache.clear()
+
+
 def cargar(dataset: str) -> pd.DataFrame:
     with _lock:
         hit = _cache.get(dataset)
-        if hit and time.time() - hit[0] < TTL:
+        if hit and time.time() - hit[0] < (TTL_GRANDES if dataset in ("reservas", "pagos") else TTL):
             return hit[1].copy()
     df = CARGADORES[dataset]()
     with _lock:

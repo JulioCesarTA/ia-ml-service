@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from app.services.analitica import datos
 
 MIN_PLATOS = 4
+MIN_REGISTROS = 2000        # registros (fecha × turno × plato) mínimos para agrupar
 
 
 def _desperdicio_por_plato() -> dict[str, float]:
@@ -28,13 +29,19 @@ def _desperdicio_por_plato() -> dict[str, float]:
 def calcular() -> dict:
     hoy = date.today().isoformat()
     acum: dict[str, dict] = defaultdict(lambda: {"veces": 0, "cupo": 0, "apartadas": 0})
+    registros = 0
     for x in datos.filas():
         if x["fecha"] <= hoy:
+            registros += 1
             a = acum[x["platoId"]]
             a["veces"] += 1; a["cupo"] += x["cupo"]; a["apartadas"] += x["apartadas"]
     desp = _desperdicio_por_plato()
     platos = sorted(acum)
-    base = {"platos": len(platos), "minimo": MIN_PLATOS, "fuenteOk": datos.fuente_ok()}
+    base = {"platos": len(platos), "minimo": MIN_PLATOS, "fuenteOk": datos.fuente_ok(),
+            "registros": registros, "minimoRegistros": MIN_REGISTROS}
+    if registros < MIN_REGISTROS:
+        return {**base, "suficiente": False,
+                "mensaje": f"Se necesitan al menos {MIN_REGISTROS} registros de menús servidos para agrupar; hay {registros}."}
     if len(platos) < MIN_PLATOS:
         return {**base, "suficiente": False,
                 "mensaje": f"Se necesitan al menos {MIN_PLATOS} platos servidos para agrupar; hay {len(platos)}."}
@@ -57,14 +64,17 @@ def calcular() -> dict:
     else:
         Z = StandardScaler().fit_transform(X)
         mejor = None
-        for k_ in range(2, min(5, unicos) + 1):
+        for k_ in range(2, min(5, unicos, len(filas) - 1) + 1):   # k debe ser menor que el número de platos (silueta)
             lab = KMeans(n_clusters=k_, n_init=10, random_state=0).fit_predict(Z)
             if len(set(lab)) < 2:
                 continue
             s = silhouette_score(Z, lab)
             if mejor is None or s > mejor[0]:
                 mejor = (s, k_, lab)
-        sil, k, etiquetas = mejor[0], mejor[1], mejor[2]
+        if mejor is None:
+            sil, k, etiquetas = None, 1, np.zeros(len(filas), dtype=int)
+        else:
+            sil, k, etiquetas = mejor[0], mejor[1], mejor[2]
 
     grupos = []
     for c in sorted(set(etiquetas)):

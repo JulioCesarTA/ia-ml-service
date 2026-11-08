@@ -6,12 +6,13 @@ usa lo último guardado y, si no hay nada, el modelo trabaja sin ese dato (sin i
 import json
 import threading
 import time
+from datetime import date, timedelta
 
 from app.data import clima_api, repo_config
 
 LAT, LON = -17.78, -63.18
 _lock = threading.Lock()
-_mem: dict = {"t": 0.0, "datos": None, "proximo": 0.0}
+_mem: dict = {"t": 0.0, "datos": None, "proximo": 0.0, "en_linea": None}
 
 
 def _guardado() -> dict:
@@ -32,11 +33,36 @@ def temperaturas() -> dict[str, float]:
             datos = clima_api.temperatura_diaria(LAT, LON)
             viejo = _guardado()
             viejo.update(datos)
+            _completar_historial(viejo)
             _guardar(viejo)
-            _mem.update(t=time.time(), datos=viejo, proximo=0.0)
+            _mem.update(t=time.time(), datos=viejo, proximo=0.0, en_linea=True)
         except Exception:
-            _mem.update(datos=_guardado(), proximo=time.time() + 600)
+            _mem.update(datos=_guardado(), proximo=time.time() + 600, en_linea=False)
         return _mem["datos"]
+
+
+def _completar_historial(d: dict) -> None:
+    """Con internet, baja del archivo de Open-Meteo los 3 años anteriores si aún no están guardados."""
+    hoy = date.today()
+    desde = (hoy - timedelta(days=365 * 3 + 1)).isoformat()
+    if d and min(d) <= (hoy - timedelta(days=365 * 3 - 30)).isoformat():
+        return
+    try:
+        d.update(clima_api.temperatura_historica(LAT, LON, desde, (hoy - timedelta(days=93)).isoformat()))
+    except Exception:
+        pass                                           # el clima histórico es un extra: sin él el modelo igual entrena
+
+
+def actualizar() -> bool:
+    """Fuerza una nueva consulta de clima ahora mismo. True si hubo internet; False si se usa lo guardado."""
+    with _lock:
+        _mem.update(t=0.0, datos=None, proximo=0.0)
+    temperaturas()
+    return bool(_mem["en_linea"])
+
+
+def en_linea() -> bool | None:
+    return _mem["en_linea"]
 
 
 def temperatura(fecha: str) -> float | None:
