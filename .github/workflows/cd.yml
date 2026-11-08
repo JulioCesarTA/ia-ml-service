@@ -1,7 +1,6 @@
 name: cd
-# Al hacer commit en main: construye la imagen EN EL PC (runner propio, usa el caché de Docker), la sube a GHCR
-# y reinicia el servicio en su servidor por SSH. Requiere el runner encendido (Escritorio\iniciar-runners.bat) y Docker Desktop abierto.
-# Secretos del repositorio: SSH_HOST, SSH_USER, SSH_KEY
+# Al hacer commit en main: construye la imagen EN EL PC (runner propio, usa el caché de Docker), la sube al registro
+# y reinicia el servicio en el clúster EKS de AWS. Requiere el runner encendido (Escritorio\iniciar-runners.bat) y Docker Desktop abierto.
 on:
   workflow_dispatch:
   push:
@@ -19,35 +18,33 @@ jobs:
       run:
         shell: C:/gitbash/bin/bash.exe --noprofile --norc -e -o pipefail {0}
     env:
-      SSH_KEY: ${{ secrets.SSH_KEY }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_USER: ${{ secrets.SSH_USER }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-west-2
     steps:
       - uses: actions/checkout@v4
-
       - name: Docker aislado (cada runner con su propia sesión)
         run: |
           DC="$RUNNER_TEMP/docker"; DCU="$(cygpath -u "$DC")"
           mkdir -p "$DCU" && cp -r ~/.docker/. "$DCU/" 2>/dev/null || true
           [ -f "$DCU/config.json" ] && sed -i '/credsStore/d;/credHelpers/d' "$DCU/config.json" || echo '{}' > "$DCU/config.json"
           echo "DOCKER_CONFIG=$DC" >> "$GITHUB_ENV"
-      - name: Login en GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Login en ECR
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin 483549541027.dkr.ecr.us-west-2.amazonaws.com
 
       - name: Construir y subir la imagen
         run: |
-          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
-          IMG=ghcr.io/$OWNER/comedor-ia-ml
-          docker build -t $IMG:latest -t $IMG:${{ github.sha }} --label org.opencontainers.image.source=https://github.com/${{ github.repository }} .
+          IMG=483549541027.dkr.ecr.us-west-2.amazonaws.com/comedor/ia-ml-service
+          docker build -t $IMG:latest .
           docker push $IMG:latest
-          docker push $IMG:${{ github.sha }}
 
-      - name: Desplegar por SSH
+      - name: Conectar con el clúster EKS
         run: |
-          OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr 'A-Z' 'a-z')
-          printf '%s\n' "$SSH_KEY" > key && chmod 600 key
-          SSH="ssh -i key -o StrictHostKeyChecking=no -o ConnectTimeout=20 $SSH_USER@$SSH_HOST"
-          echo "${{ secrets.GITHUB_TOKEN }}" | $SSH "docker login ghcr.io -u ${{ github.actor }} --password-stdin"
-          $SSH "cd ~/comedor && docker compose --env-file .env --env-file .env.secrets --env-file .env.ec2 -f docker-compose.yml -f docker-compose.ec2.yml pull ia-ml-service && docker compose --env-file .env --env-file .env.secrets --env-file .env.ec2 -f docker-compose.yml -f docker-compose.ec2.yml up -d --no-deps ia-ml-service && docker image prune -f >/dev/null"
-          rm -f key
+          echo "KUBECONFIG=$RUNNER_TEMP/kube.yaml" >> "$GITHUB_ENV"
+          KUBECONFIG="$RUNNER_TEMP/kube.yaml" aws eks update-kubeconfig --name comedor
+
+      - name: Reiniciar en EKS
+        run: |
+          kubectl -n comedor rollout restart deploy/ia-ml-service
+          kubectl -n comedor rollout status deploy/ia-ml-service --timeout=600s
