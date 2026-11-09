@@ -36,11 +36,6 @@ def menus_historial(desde: str, hasta: str) -> list[dict]:
     return r.json()
 
 
-def publicar_menu(fecha: str, turno: str, platos: list[dict]) -> bool:
-    r = httpx.post(f"{url('menu')}/menus", json={"fecha": fecha, "turno": turno, "platos": platos}, timeout=15)
-    return r.status_code < 300
-
-
 def apartar_porcion(menu_id: str, plato_id: str) -> None:
     httpx.post(f"{url('menu')}/porciones/apartar", json={"menuId": menu_id, "platoId": plato_id}, timeout=10).raise_for_status()
 

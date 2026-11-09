@@ -1,15 +1,14 @@
 """Agente: Inventario y compras.
 
 Misión: 'Que nunca falte un insumo ni se venza nada.'
-  1) Lee insumos y lotes (MCP).
-  2) Detecta stock bajo (stock actual <= mínimo) y lotes que vencen en 7 días o menos.
-  3) Prepara órdenes de compra en BORRADOR (nunca compra solo).
+  1) Pide por MCP el borrador de orden de compra (insumos con stock <= mínimo) y los lotes que vencen en 7 días o menos.
+  2) Le agrega precio y proveedor sugerido (nunca compra solo).
+  3) Evalúa la severidad.
   4) Si hay algo que decidir, arma el aviso para el administrador.
 
 La versión del navegador (backoffice) implementa exactamente la misma lógica y
 produce el mismo texto y la misma clave de alerta, para no avisar dos veces.
 """
-import math
 from datetime import date
 
 from app.data.mcp_tools import McpToolClient
@@ -28,10 +27,6 @@ PRECIO_BS = {
 }
 
 
-def _stock(ins: dict) -> float:
-    return sum(((l.get("cantidad") or {}).get("valor") or 0) for l in (ins.get("lotes") or []))
-
-
 def _fmt(n: float) -> str:
     return str(int(n)) if float(n).is_integer() else f"{n:.1f}"
 
@@ -39,25 +34,21 @@ def _fmt(n: float) -> str:
 class InventarioComprasAgent:
     def run(self, objetivo: str, contexto: dict) -> dict:
         tools = McpToolClient()
-        insumos = tools.ver_stock_insumo() or []
+        borrador = tools.crear_orden_compra_borrador() or []
         por_vencer = tools.lotes_por_vencer(dias=DIAS_VENCIMIENTO)
 
         en_riesgo, ordenes, total_bs = [], [], 0.0
-        for ins in insumos:
-            actual = _stock(ins)
-            minimo = float(ins.get("stockMinimo") or 0)
-            if actual > minimo:
-                continue
-            nombre = str(ins.get("nombre", "")).upper()
-            cantidad = max(1, math.ceil(2 * minimo - actual))
+        for linea in borrador:
+            nombre = str(linea.get("nombre", "")).upper()
+            cantidad = linea["cantidadSugerida"]
             precio = PRECIO_BS.get(nombre, 10.0)
             subtotal = cantidad * precio
             total_bs += subtotal
-            en_riesgo.append({"id": ins.get("id"), "nombre": nombre, "stockActual": actual,
-                              "stockMinimo": minimo, "unidad": ins.get("unidad")})
+            en_riesgo.append({"id": linea.get("insumoId"), "nombre": nombre, "stockActual": linea.get("stockActual", 0),
+                              "stockMinimo": linea.get("stockMinimo", 0), "unidad": linea.get("unidad")})
             ordenes.append({
-                "insumoId": ins.get("id"), "nombre": nombre, "cantidadSugerida": cantidad,
-                "unidad": ins.get("unidad"), "precioUnitarioBs": precio,
+                "insumoId": linea.get("insumoId"), "nombre": nombre, "cantidadSugerida": cantidad,
+                "unidad": linea.get("unidad"), "precioUnitarioBs": precio,
                 "subtotalBs": round(subtotal, 2),
                 "proveedorSugerido": PROVEEDOR.get(nombre, "A definir"), "estado": "BORRADOR",
             })

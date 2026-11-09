@@ -1,7 +1,10 @@
-"""Cliente de la API de Telegram (Bot API)."""
+"""Cliente de la API de Telegram (Bot API). Con n8n activo, n8n hace el envío; sin n8n (desarrollo local) se llama directo."""
+import base64
 import os
 
 import httpx
+
+from app.data import n8n
 
 ErrorDeRed = httpx.TransportError          # sin internet: el llamador decide reintentar más tarde
 
@@ -15,15 +18,21 @@ def _url(metodo: str) -> str:
 
 
 def llamar(metodo: str, espera: float = 15, **payload) -> dict:
-    r = httpx.post(_url(metodo), json=payload, timeout=espera)
-    j = r.json()
+    if n8n.activo():
+        j = n8n.llamar("notificar", {"canal": "telegram", "metodo": metodo, "datos": payload}, espera + 5)
+    else:
+        j = httpx.post(_url(metodo), json=payload, timeout=espera).json()
     if not j.get("ok"):
-        raise RuntimeError(f"Telegram {metodo}: {j.get('description', r.status_code)}")
-    return j["result"]
+        raise RuntimeError(f"Telegram {metodo}: {j.get('description', 'sin detalle')}")
+    return j.get("result") or {}
 
 
 def enviar_foto(chat: str, png: bytes, pie: str) -> None:
-    r = httpx.post(_url("sendPhoto"), data={"chat_id": chat, "caption": pie[:1000]},
-                   files={"photo": ("qr.png", png, "image/png")}, timeout=30)
-    if not r.json().get("ok"):
-        raise RuntimeError(f"Telegram sendPhoto: {r.text[:150]}")
+    if n8n.activo():
+        j = n8n.llamar("notificar", {"canal": "telegram-foto", "chat_id": chat, "caption": pie[:1000],
+                                     "png": base64.b64encode(png).decode()}, 35)
+    else:
+        j = httpx.post(_url("sendPhoto"), data={"chat_id": chat, "caption": pie[:1000]},
+                       files={"photo": ("qr.png", png, "image/png")}, timeout=30).json()
+    if not j.get("ok"):
+        raise RuntimeError(f"Telegram sendPhoto: {j.get('description', 'sin detalle')}")

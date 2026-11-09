@@ -9,6 +9,7 @@ Misión: 'Monitoreame el comedor y avisame lo importante.'
 """
 from datetime import date, timedelta
 from app.data import cqrs_client
+from app.data.mcp_tools import McpToolClient
 
 
 PRESUPUESTO_BS_RACION = 7.0           # SPEC: costo objetivo por ración
@@ -96,12 +97,16 @@ class MonitorComedorAgent:
                      else "Todo en rango normal, sin alertas."))
         )
 
+        tools = McpToolClient()
+        cocinar_hoy = {t: tools.sugerir_cantidad_cocinar(t) for t in ("DESAYUNO", "ALMUERZO", "CENA")}
+
         return {
             "agente": "monitor-comedor",
             "objetivo": objetivo,
             "fecha": hoy.isoformat(),
             "kpis": kpis,
             "hallazgos": hallazgos,
+            "cocinarHoy": cocinar_hoy,
             "resumenEjecutivo": resumen,
             "destinatario": "administrador",
             "requiere_confirmacion_humana": False,

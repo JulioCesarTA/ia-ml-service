@@ -69,7 +69,7 @@ def baja_dispositivo(body: BajaIn):
 def prueba(body: PruebaIn):
     """Manda una notificación de prueba a un usuario o a un rol (para comprobar que todo está conectado)."""
     if not push.configurado():
-        raise HTTPException(503, "Firebase no está configurado en el servidor (falta FIREBASE_CREDENCIALES)")
+        raise HTTPException(503, "El envío de push no está configurado (falta N8N_URL)")
     if body.usuario:
         return push.enviar_a_usuario(body.usuario, body.titulo, body.cuerpo, {"tipo": "prueba"})
     if body.roles:

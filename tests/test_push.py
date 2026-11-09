@@ -25,7 +25,7 @@ def _tok() -> str:
 def fcm(monkeypatch):
     """Firebase simulado: guarda lo que se enviaría y permite marcar tokens como ya inválidos."""
     enviados, muertos = [], set()
-    monkeypatch.setattr(push, "_info", lambda: {"project_id": "demo"})
+    monkeypatch.setenv("N8N_URL", "http://n8n:5678")
 
     def falso(token, titulo, cuerpo, datos):
         if token in muertos:
@@ -112,29 +112,32 @@ def test_los_datos_van_como_texto_y_los_textos_se_recortan(fcm):
     assert m["datos"] == {"n": "5", "ok": "True"} and len(m["titulo"]) == 100 and len(m["cuerpo"]) == 400
 
 
-def test_el_mensaje_a_firebase_se_guarda_si_el_telefono_esta_sin_red_y_no_se_acumula(monkeypatch):
-    """Sin internet en el teléfono, Firebase conserva el aviso 2 días y entrega solo el último de cada tipo."""
+def test_el_push_sale_por_n8n_con_vigencia_de_dos_dias(monkeypatch):
+    """n8n envía a Firebase. Sin internet en el teléfono, Firebase conserva el aviso 2 días."""
     capturado = {}
 
-    class Resp:
-        status_code, text = 200, "{}"
-
-    def falso_post(url, headers=None, json=None, timeout=None):
-        capturado.update(url=url, cuerpo=json)
-        return Resp()
-    monkeypatch.setattr(push, "_info", lambda: {"project_id": "demo"})
-    monkeypatch.setattr(push, "_token_acceso", lambda: "t")
-    monkeypatch.setattr(push.httpx, "post", falso_post)
+    def falso_llamar(webhook, cuerpo, espera=20):
+        capturado.update(webhook=webhook, cuerpo=cuerpo)
+        return {"ok": True}
+    monkeypatch.setenv("N8N_URL", "http://n8n:5678")
+    monkeypatch.setattr(push.n8n, "llamar", falso_llamar)
     ok, muerto = push._enviar_fcm("tok" * 10, "T", "C", {"tipo": "stock_bajo"})
-    a = capturado["cuerpo"]["message"]["android"]
     assert ok and not muerto
-    assert a["ttl"] == "172800s" and a["collapse_key"] == "stock_bajo" and a["priority"] == "HIGH"
-    assert a["notification"]["channel_id"] == "avisos_comedor"
-    assert capturado["url"].endswith("/projects/demo/messages:send")
+    assert capturado["webhook"] == "notificar"
+    c = capturado["cuerpo"]
+    assert c["canal"] == "push" and c["vigencia"] == "172800s" and c["canalAndroid"] == "avisos_comedor"
 
 
-def test_sin_credencial_el_envio_no_rompe_nada(monkeypatch):
-    monkeypatch.setattr(push, "_info", lambda: None)
+def test_si_n8n_no_responde_el_push_no_rompe_y_el_token_sigue_valido(monkeypatch):
+    def caido(*a, **k):
+        raise push.n8n.ErrorDeRed("sin red")
+    monkeypatch.setenv("N8N_URL", "http://n8n:5678")
+    monkeypatch.setattr(push.n8n, "llamar", caido)
+    assert push._enviar_fcm("tok" * 10, "T", "C", {}) == (False, False)
+
+
+def test_sin_n8n_el_envio_no_rompe_nada(monkeypatch):
+    monkeypatch.delenv("N8N_URL", raising=False)
     t = _tok()
     api.registrar_dispositivo(api.DispositivoIn(token=t), authorization=_jwt("sinfb", ["administrador"]))
     r = push.enviar_a_usuario("sinfb", "Hola", "x")

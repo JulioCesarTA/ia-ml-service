@@ -1,4 +1,5 @@
 """SQLite local del servicio (funciona sin internet): ubicación, esquema y bloqueo compartidos por los repositorios."""
+import logging
 import os
 import sqlite3
 import tempfile
@@ -17,6 +18,7 @@ def directorio_datos() -> str:
             return d
     except OSError:
         pass
+    logging.getLogger(__name__).error("No se puede escribir en %s: los datos se guardan en un temporal y se perderán al reiniciar", d)
     return tempfile.gettempdir()
 
 

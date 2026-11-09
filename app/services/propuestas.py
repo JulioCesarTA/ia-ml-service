@@ -2,13 +2,14 @@
 
 Todo se guarda en SQLite local (sin internet): propuestas, cola de mensajes a Telegram
 y configuración. Al aprobar una propuesta se ejecuta su acción:
-  - menu:   publica los menús propuestos en menu-inventario-service.
-  - compra: deja la orden de compra aprobada y lista para enviar a los proveedores.
+  - menu:   publica los menús propuestos en menu-inventario-service, por MCP.
+  - compra: n8n registra la obligación de pago por proveedor en pagos-tickets-service (SPEC §9, flujo 2).
 """
 import os
 from collections import defaultdict
 
-from app.data import comedor_http, repo_propuestas
+from app.data import n8n, repo_propuestas
+from app.data.mcp_tools import McpToolClient
 
 VENTANA_S = int(os.getenv("AVISO_VENTANA_S", str(12 * 3600)))
 
@@ -36,8 +37,10 @@ def resolver(pid: str, aprobar: bool, canal: str = "panel") -> dict | None:
     if p is None or not aprobar:
         return p
     try:
-        ejecutor = {"menu": _ejecutar_menu, "compra": _ejecutar_compra}[p["tipo"]]
-        resultado, ok = ejecutor(p["payload"])
+        if p["tipo"] == "compra":
+            resultado, ok = _ejecutar_compra(p["payload"], pid)
+        else:
+            resultado, ok = _ejecutar_menu(p["payload"])
     except Exception as e:  # el administrador ve el error y puede reintentar con una propuesta nueva
         resultado, ok = f"No se pudo ejecutar: {e}", False
     repo_propuestas.cerrar(pid, "EJECUTADA" if ok else "ERROR", f"{resultado} (aprobada desde {canal})")
@@ -51,17 +54,13 @@ def _ejecutar_menu(payload: dict) -> tuple[str, bool]:
     for it in payload.get("propuesta", []):
         grupos[(it["fecha"], it["turno"])].append({"platoId": it["platoId"], "cupo": max(1, int(it["racionesSugeridas"]))})
     publicados = omitidos = fallidos = 0
-    existentes: dict[str, set] = {}
-    for turno in {t for _, t in grupos}:
-        try:
-            existentes[turno] = {m.get("fecha") for m in comedor_http.menus_semana(turno)}
-        except Exception:
-            existentes[turno] = set()
+    tools = McpToolClient()
+    existentes = {turno: {m.get("fecha") for m in tools.consultar_menu(turno)} for turno in {t for _, t in grupos}}
     for (fecha, turno), platos in sorted(grupos.items()):
         if fecha in existentes.get(turno, set()):
             omitidos += 1
             continue
-        if comedor_http.publicar_menu(fecha, turno, platos):
+        if tools.publicar_menu(fecha, turno, platos):
             publicados += 1
         else:
             fallidos += 1
@@ -73,7 +72,7 @@ def _ejecutar_menu(payload: dict) -> tuple[str, bool]:
     return txt, fallidos == 0 and publicados + omitidos > 0
 
 
-def _ejecutar_compra(payload: dict) -> tuple[str, bool]:
+def _ejecutar_compra(payload: dict, pid: str) -> tuple[str, bool]:
     ordenes = payload.get("ordenesBorrador", [])
     if not ordenes:
         return "No había líneas de compra", False
@@ -81,6 +80,11 @@ def _ejecutar_compra(payload: dict) -> tuple[str, bool]:
     por_proveedor: dict[str, list] = defaultdict(list)
     for o in ordenes:
         por_proveedor[o.get("proveedorSugerido", "A definir")].append(o)
+    if n8n.activo():
+        n8n.llamar("orden-aprobada", {"ordenId": pid, "proveedores": [
+            {"proveedor": prov, "monto": round(sum(i["subtotalBs"] for i in items), 2),
+             "detalle": [f"{i['nombre']}: {i['cantidadSugerida']} {i['unidad']}" for i in items]}
+            for prov, items in por_proveedor.items()]}, 30)
     lineas = ["Orden de compra APROBADA. Pedir a cada proveedor:"]
     for prov, items in por_proveedor.items():
         sub = sum(i["subtotalBs"] for i in items)
