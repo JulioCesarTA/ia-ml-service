@@ -54,6 +54,9 @@ def _iniciar() -> None:
               estado TEXT, intentos INTEGER DEFAULT 0, creado REAL);
             CREATE TABLE IF NOT EXISTS ref_porcion(
               id TEXT PRIMARY KEY, plato_id TEXT, fecha TEXT, turno TEXT, creado REAL, f_ref REAL, advertencia TEXT);
+            CREATE TABLE IF NOT EXISTS dispositivos(
+              token TEXT PRIMARY KEY, usuario TEXT NOT NULL, roles TEXT DEFAULT '[]',
+              plataforma TEXT DEFAULT 'android', actualizado REAL);
             CREATE TABLE IF NOT EXISTS bandejas(
               id TEXT PRIMARY KEY, ref_id TEXT, plato_id TEXT, fecha TEXT, turno TEXT, creado REAL,
               restante REAL, comido REAL, confianza REAL);

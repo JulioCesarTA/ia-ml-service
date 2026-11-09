@@ -2,7 +2,7 @@
 import hashlib
 from datetime import date
 
-from app.services import propuestas, telegram_bot
+from app.services import propuestas, push, telegram_bot
 
 DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 TURNO = {"DESAYUNO": "Desayuno", "ALMUERZO": "Almuerzo", "CENA": "Cena"}
@@ -20,7 +20,30 @@ def proponer_inventario(r: dict, forzar: bool = False) -> dict | None:
     p, nueva = propuestas.registrar(
         "compra", r["claveAlerta"], f"Orden de compra ({r['severidad']}): {len(r['ordenesBorrador'])} insumos, {r['totalBorradorBs']} Bs",
         r["mensajeAdmin"], r, forzar=forzar)
+    if nueva:
+        _push_inventario(r, p["id"])
     return _publicar(p, nueva, r["mensajeAdmin"])
+
+
+ROLES_INVENTARIO = ["administrador", "cocina_almacen"]
+
+
+def _push_inventario(r: dict, propuesta_id: str) -> None:
+    """Stock bajo o lotes por vencer: aviso al celular del administrador y de cocina. Nunca detiene al agente."""
+    try:
+        bajos = [i["nombre"] for i in r.get("insumosEnRiesgo", [])]
+        vencen = [f"{x['nombre']} ({x['diasRestantes']} d)" for x in r.get("lotesPorVencer", [])]
+        partes = []
+        if bajos:
+            partes.append("Stock bajo: " + ", ".join(bajos[:3]) + (f" y {len(bajos) - 3} más" if len(bajos) > 3 else ""))
+        if vencen:
+            partes.append("Por vencer: " + ", ".join(vencen[:3]) + (f" y {len(vencen) - 3} más" if len(vencen) > 3 else ""))
+        if not partes:
+            return
+        push.enviar_a_roles(ROLES_INVENTARIO, f"Inventario: alerta {r['severidad']}", ". ".join(partes) + ".",
+                            {"tipo": "stock_bajo", "propuesta": propuesta_id})
+    except Exception:
+        pass
 
 
 def _texto_menu(r: dict) -> str:
