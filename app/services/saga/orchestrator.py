@@ -84,6 +84,95 @@ class SagaOrchestrator:
             dynamo_client.put_saga(saga_id, estado)
             raise
 
+    # ----------------------------- reservar primero, pagar después -----------------------------
+
+    def reservar(self, p: dict) -> dict:
+        """Pasos 1 y 2 de la Saga 1 SIN cobrar: queda la reserva «pendiente» con su porción apartada.
+        Con beca vigente que cubre la ración no hay nada que pagar: se completa todo (beca + confirmación + QR)."""
+        cached = dynamo_client.check_and_lock_idempotency(p["idempotency_key"])
+        if cached and cached.get("sagaId"):
+            return cached
+        beca = srv.beca(p["estudiante_id"])
+        if beca.get("tieneBeca") and beca.get("cubreHoy"):
+            out = self.reservar_y_pagar({**p, "metodo_pago": "beca", "monto": 0.0, "idempotency_key": f"{p['idempotency_key']}:beca"})
+            dynamo_client.save_idempotency_response(p["idempotency_key"], out)
+            return out
+
+        saga_id = str(uuid.uuid4())
+        estado = {"sagaId": saga_id, "tipo": "reservar", "step": 0, "status": "RUNNING", "payload": p,
+                  "compensations": [], "started_at": datetime.utcnow().isoformat()}
+        dynamo_client.put_saga(saga_id, estado)
+        try:
+            reserva_id = srv.crear_reserva({
+                "estudianteId": p["estudiante_id"], "menuId": p["menu_id"], "platoId": p["plato_id"],
+                "fecha": p["fecha"], "turno": p["turno"], "sagaId": saga_id})
+            estado.update(step=1, reservaId=reserva_id)
+            estado["compensations"].append({"srv": "comensales", "accion": "cancelar", "reservaId": reserva_id})
+            srv.apartar_porcion(p["menu_id"], p["plato_id"])
+            estado.update(step=2, status="RESERVED", finished_at=datetime.utcnow().isoformat())
+            dynamo_client.put_saga(saga_id, estado)
+            out = {"sagaId": saga_id, "status": "RESERVED", "reservaId": reserva_id, "requierePago": True, "qr": None, "stripe": None}
+            dynamo_client.save_idempotency_response(p["idempotency_key"], out)
+            return out
+        except Exception as e:
+            self._compensar(estado)
+            estado.update(status="COMPENSATED", error=str(e), finished_at=datetime.utcnow().isoformat())
+            dynamo_client.put_saga(saga_id, estado)
+            raise
+
+    def pagar(self, p: dict) -> dict:
+        """Paso 3 y 4 de una reserva pendiente: cobrar (QR bancario por Stripe o efectivo) y confirmar con su QR.
+        Con QR/tarjeta queda PENDING_PAYMENT hasta que el pago se verifique (`confirmar_pago`)."""
+        cached = dynamo_client.check_and_lock_idempotency(p["idempotency_key"])
+        if cached and cached.get("sagaId"):
+            return cached
+        if p["metodo_pago"] not in ("qr_bancario", "efectivo"):
+            raise ValueError("metodo_pago debe ser qr_bancario o efectivo")
+        r = srv.obtener_reserva(p["reserva_id"])
+        if r["estado"] != "pendiente":
+            raise ValueError(f"La reserva está «{r['estado']}»: solo se paga una reserva pendiente")
+        saga_id = str(uuid.uuid4())
+        estado = {"sagaId": saga_id, "tipo": "pagar", "step": 0, "status": "RUNNING", "payload": p, "reservaId": p["reserva_id"],
+                  "started_at": datetime.utcnow().isoformat()}
+        dynamo_client.put_saga(saga_id, estado)
+        pago = srv.cobrar({"reservaId": p["reserva_id"], "estudianteId": p["estudiante_id"], "monto": p["monto"],
+                           "metodo": p["metodo_pago"], "sagaId": saga_id})
+        estado.update(step=1, pagoId=pago["pagoId"], ticketId=pago["ticketId"])
+        if pago.get("stripe"):
+            estado["status"] = "PENDING_PAYMENT"
+            dynamo_client.put_saga(saga_id, estado)
+            out = {"sagaId": saga_id, "status": "PENDING_PAYMENT", "reservaId": p["reserva_id"], "pagoId": pago["pagoId"],
+                   "ticketId": pago["ticketId"], "qr": None, "stripe": pago["stripe"]}
+            dynamo_client.save_idempotency_response(p["idempotency_key"], out)
+            return out
+        try:
+            confirmada, conf = srv.confirmar_reserva(p["reserva_id"])
+            if not confirmada:
+                raise RuntimeError("No se pudo confirmar la reserva")
+        except Exception as e:                       # compensación: el cobro se devuelve y la reserva sigue pendiente
+            try:
+                srv.devolver_pago(pago["pagoId"])
+            except Exception:
+                pass
+            estado.update(status="COMPENSATED", error=str(e), finished_at=datetime.utcnow().isoformat())
+            dynamo_client.put_saga(saga_id, estado)
+            raise
+        estado.update(step=2, status="COMPLETED", qr=conf.get("qr"), finished_at=datetime.utcnow().isoformat())
+        dynamo_client.put_saga(saga_id, estado)
+        out = {"sagaId": saga_id, "status": "COMPLETED", "reservaId": p["reserva_id"], "pagoId": pago["pagoId"],
+               "ticketId": pago["ticketId"], "qr": conf.get("qr"), "stripe": None}
+        dynamo_client.save_idempotency_response(p["idempotency_key"], out)
+        return out
+
+    def cancelar_sin_pago(self, reserva_id: str) -> dict:
+        """Cancela una reserva que aún no se pagó y devuelve su porción al cupo (no hay pago que devolver)."""
+        r = srv.obtener_reserva(reserva_id)
+        if r["estado"] != "pendiente":
+            raise ValueError(f"La reserva está «{r['estado']}»: solo se cancela sin devolución una reserva pendiente de pago")
+        srv.cancelar_reserva(reserva_id)             # primero la reserva (la que manda); luego el cupo
+        srv.liberar_porcion(r["menuId"], r["platoId"])
+        return {"status": "COMPLETED", "reservaId": reserva_id}
+
     def confirmar_pago(self, reserva_id: str, referencia: str) -> dict:
         """Verifica el pago contra Stripe y, solo si está pagado, confirma la reserva y emite el QR."""
         info = srv.verificar_pago(referencia)

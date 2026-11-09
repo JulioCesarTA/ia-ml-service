@@ -62,6 +62,15 @@ def beca(username: str) -> dict:
         return {}
 
 
+def obtener_reserva(reserva_id: str) -> dict:
+    """La reserva tal como está en comensales: {id, estudianteId, menuId, platoId, fecha, turno, estado, qr}."""
+    r = httpx.get(f"{url('comensales')}/reservas/{reserva_id}", timeout=10)
+    if r.status_code == 404:
+        raise ValueError("La reserva no existe")
+    r.raise_for_status()
+    return r.json()
+
+
 def crear_reserva(datos: dict) -> str:
     """Crea la reserva pendiente y devuelve su id. Una segunda reserva el mismo día lanza ValueError con el motivo."""
     r = httpx.post(f"{url('comensales')}/reservas", json=datos, timeout=10)

@@ -1,6 +1,6 @@
 """SPEC §5: Saga orchestrator + idempotencia (estado en DynamoDB)."""
 from fastapi import APIRouter, HTTPException
-from app.models.sagas import CancelarReq, ConfirmarPagoReq, ReservarYPagarReq
+from app.models.sagas import CancelarReq, CancelarReservaReq, ConfirmarPagoReq, PagarReq, ReservarReq, ReservarYPagarReq
 from app.services.saga.orchestrator import SagaOrchestrator
 
 router = APIRouter()
@@ -10,6 +10,30 @@ router = APIRouter()
 def saga1(body: ReservarYPagarReq):
     try:
         return SagaOrchestrator().reservar_y_pagar(body.model_dump())
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/reservar")
+def reservar(body: ReservarReq):
+    try:
+        return SagaOrchestrator().reservar(body.model_dump())
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/pagar")
+def pagar(body: PagarReq):
+    try:
+        return SagaOrchestrator().pagar(body.model_dump())
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/cancelar-reserva")
+def cancelar_reserva(body: CancelarReservaReq):
+    try:
+        return SagaOrchestrator().cancelar_sin_pago(body.reserva_id)
     except Exception as e:
         raise HTTPException(400, str(e))
 

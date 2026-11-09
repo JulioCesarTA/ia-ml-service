@@ -13,6 +13,29 @@ class ReservarYPagarReq(BaseModel):
     idempotency_key: str
 
 
+class ReservarReq(BaseModel):
+    """Reservar SIN pagar: se paga después desde «Mis reservas» (con beca que cubre, queda todo resuelto)."""
+    estudiante_id: str
+    menu_id: str
+    plato_id: str
+    fecha: str
+    turno: str
+    idempotency_key: str
+
+
+class PagarReq(BaseModel):
+    reserva_id: str
+    estudiante_id: str
+    metodo_pago: str  # qr_bancario | efectivo
+    monto: float
+    idempotency_key: str
+
+
+class CancelarReservaReq(BaseModel):
+    """Cancelar una reserva que todavía no se pagó (no hay nada que devolver)."""
+    reserva_id: str
+
+
 class CancelarReq(BaseModel):
     reserva_id: str
     pago_id: str
