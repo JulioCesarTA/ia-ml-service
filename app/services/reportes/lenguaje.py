@@ -101,7 +101,7 @@ def _vocabulario() -> list[str]:
         for c in ds["columnas"]:
             for f in frases(c):
                 v |= set(f.split(" "))
-    return [w for w in v if len(w) >= 4]
+    return sorted(w for w in v if len(w) >= 4)           # orden fijo: un set de Python cambia de orden entre ejecuciones
 
 
 VOCAB = _vocabulario()

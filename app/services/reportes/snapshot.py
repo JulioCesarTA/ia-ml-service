@@ -49,4 +49,7 @@ def construir(roles: list[str]) -> dict:
     for did, filas in datos.items():
         cols = [c["nombre"] for c in catalogo.DATASETS[did]["columnas"]]
         out[did] = {"columnas": cols, "filas": [[r[c] for c in cols] for r in filas]}
-    return {"generado": datetime.now().strftime("%Y-%m-%d %H:%M"), "datasets": out, "errores": errores}
+    # El catálogo viaja con los datos: el motor del teléfono lo usa tal cual, sin una copia propia que se desfase.
+    permitidos_ = permitidos(roles)
+    return {"generado": datetime.now().strftime("%Y-%m-%d %H:%M"), "datasets": out, "errores": errores,
+            "catalogo": {did: d for did, d in catalogo.DATASETS.items() if did in permitidos_}}
