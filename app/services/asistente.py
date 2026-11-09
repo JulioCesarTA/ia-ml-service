@@ -35,9 +35,17 @@ def _png(data_uri: str) -> bytes:
 
 # ----------------------------- teclados -----------------------------
 
+# Quién puede reservar por Telegram: los estudiantes y también el administrador (que paga su ración con QR, sin beca).
+PUEDEN_RESERVAR = {"estudiante", "administrador"}
+
+
+def _puede_reservar(roles: list[str]) -> bool:
+    return bool(set(roles) & PUEDEN_RESERVAR)
+
+
 def _teclado(roles: list[str]) -> list[list[dict]]:
     filas = [[tg.boton("📋 Menú", "m:menu"), tg.boton("🙋 Quién soy", "m:quien")]]
-    if "estudiante" in roles:
+    if _puede_reservar(roles):
         filas.append([tg.boton("🍽️ Reservar", "m:res")])
     if "administrador" in roles:
         filas.append([tg.boton("⏳ Pendientes", "m:pend")])
@@ -128,7 +136,7 @@ def _cambiar_cuenta(cid: str) -> None:
 def _quien_soy(cid: str, ch: dict) -> None:
     lineas = [f"👤 {ch['nombre']}", f"Usuario: {ch['username']}", f"Correo: {ch['email']}",
               "Rol: " + ", ".join(ETIQ_ROL.get(r, r) for r in ch["roles"])]
-    if "estudiante" in ch["roles"]:
+    if _puede_reservar(ch["roles"]):
         b = comedor_http.beca(ch["username"])
         if b.get("tieneBeca"):
             lineas.append(f"🎓 Beca {b.get('tipo')}: {b.get('racionesUsadasMes', 0)}/{b.get('cupoRacionesMes', 0)} raciones este mes"
@@ -153,8 +161,8 @@ def _ver_menu(cid: str, turno: str = "ALMUERZO") -> None:
 
 
 def _elegir_turno(cid: str, ch: dict) -> None:
-    if "estudiante" not in ch["roles"]:
-        tg.enviar(cid, "Las reservas son solo para estudiantes.")
+    if not _puede_reservar(ch["roles"]):
+        tg.enviar(cid, "Las reservas son solo para estudiantes y administradores.")
         return
     tg.enviar(cid, "¿Para qué turno quieres reservar?",
               [[tg.boton(ETIQ_TURNO[k], f"r:T:{c}") for c, k in TURNOS.items()]])
@@ -297,7 +305,7 @@ def boton(cb: dict) -> None:
          "pend": lambda: _pendientes(cid), "cambiar": lambda: _cambiar_cuenta(cid)}.get(d[1], lambda: None)()
     elif d[0] == "t":
         _ver_menu(cid, TURNOS.get(d[1], "ALMUERZO"))
-    elif d[0] == "r" and "estudiante" in ch["roles"]:
+    elif d[0] == "r" and _puede_reservar(ch["roles"]):
         if d[1] == "T":
             _elegir_dia(cid, d[2])
         elif d[1] == "D":
