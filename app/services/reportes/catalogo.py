@@ -136,6 +136,29 @@ DATASETS: dict[str, dict] = {
         "medida": [("count", None)],
         "ejemplos": ["insumos con stock bajo", "insumos que vencen en los próximos 7 días", "inventario ordenado por stock ascendente en pdf"],
     },
+    "asistencia": {
+        "raices": ["asistenc", "turno de", "marca"],
+        "etiqueta": "Asistencia del personal",
+        "descripcion": "Entradas y salidas del personal del comedor, con la distancia a la que marcaron.",
+        "sinonimos": ["asistencia", "asistencias", "marcacion", "marcaciones", "marcas", "entradas", "salidas",
+                      "personal", "empleados", "trabajadores", "cocineros", "fichaje", "puntualidad"],
+        "palabras_clave": "asistencia del personal entradas salidas marcaciones quién vino puntualidad turnos trabajados cocineros",
+        "fecha": "fecha",
+        "columnas": [
+            col("fecha", "Fecha", "fecha", ["dia"]),
+            col("hora", "Hora", "texto", ["horario", "a que hora"]),
+            col("usuario", "Persona", "texto", ["empleado", "trabajador", "personal", "quien", "nombre", "cocinero"]),
+            col("rol", "Rol", "categoria", ["cargo", "puesto", "funcion"]),
+            col("tipo", "Tipo de marca", "categoria", ["entrada", "salida", "marca"]),
+            col("distancia", "Distancia (m)", "numero", ["metros", "lejania", "que tan lejos"], "entero"),
+            col("ubicacion", "Ubicación", "categoria", ["lugar", "donde marco", "dentro", "fuera"]),
+            col("revisar", "Para revisar", "categoria", ["sospechosa", "irregular", "dudosa"]),
+        ],
+        "defecto": ["fecha", "hora", "usuario", "rol", "tipo", "ubicacion"],
+        "medida": [["count", None]],
+        "ejemplos": ["asistencia del personal de este mes", "cuántas marcas por persona",
+                     "marcas fuera del comedor", "entradas por día de la semana"],
+    },
     "desperdicio": {
         "raices": ['desperdic', 'sobrant', 'merma'],
         "etiqueta": "Desperdicio (fotos de bandejas)",
@@ -161,7 +184,7 @@ DATASETS: dict[str, dict] = {
 PERMISOS = {
     "administrador": set(DATASETS),
     "nutricionista": {"menus", "desperdicio", "reservas", "insumos"},
-    "cocina_almacen": {"insumos", "menus", "reservas", "desperdicio"},
+    "cocina_almacen": {"insumos", "menus", "reservas", "desperdicio", "asistencia"},   # ve la asistencia, la suya incluida
     "servicio_caja": {"pagos", "reservas"},
 }
 

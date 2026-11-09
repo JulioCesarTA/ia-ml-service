@@ -79,6 +79,14 @@ def _becas() -> pd.DataFrame:
     return df[["estudiante", "matricula", "tipo", "cupoMensual", "usadas", "disponibles", "uso", "desde", "hasta", "vigente"]]
 
 
+def _asistencia() -> pd.DataFrame:
+    filas = _json(comedor_http.url("comensales") + "/analitica/asistencia")
+    df = pd.DataFrame(filas, columns=["id", "fecha", "hora", "usuario", "rol", "tipo", "distancia", "ubicacion", "revisar"])
+    df["fecha"] = _fecha_dia(df["fecha"])
+    df["distancia"] = pd.to_numeric(df["distancia"], errors="coerce").fillna(0).astype(int)
+    return df[["fecha", "hora", "usuario", "rol", "tipo", "distancia", "ubicacion", "revisar"]]
+
+
 def _estudiantes() -> pd.DataFrame:
     est = pd.DataFrame(_json(comedor_http.url("comensales") + "/estudiantes"),
                        columns=["id", "registroUniv", "nombre", "email", "telefono"]).rename(columns={"registroUniv": "matricula"})
@@ -140,7 +148,7 @@ def _desperdicio() -> pd.DataFrame:
 
 
 CARGADORES = {"reservas": _reservas, "pagos": _pagos, "estudiantes": _estudiantes, "becas": _becas,
-              "menus": _menus, "insumos": _insumos, "desperdicio": _desperdicio}
+              "menus": _menus, "insumos": _insumos, "desperdicio": _desperdicio, "asistencia": _asistencia}
 
 
 def invalidar() -> None:
