@@ -7,7 +7,8 @@ from botocore.exceptions import ClientError
 def _client():
     return boto3.client(
         "dynamodb",
-        # En producción es DynamoDB real de AWS (DYNAMODB_ENDPOINT vacío), con un usuario IAM que solo ve estas dos tablas.
+        # En producción es DynamoDB real de AWS (DYNAMODB_ENDPOINT con la URL de AWS), con un usuario IAM que solo ve estas dos tablas.
+        # La URL debe ir explícita: el pod tiene AWS_ENDPOINT_URL apuntando a LocalStack, para SNS y SQS.
         # En desarrollo local (docker compose) sigue siendo DynamoDB Local.
         region_name=os.getenv("DYNAMODB_REGION") or os.getenv("AWS_REGION", "us-east-1"),
         endpoint_url=(os.getenv("DYNAMODB_ENDPOINT", "http://dynamodb-local:8000") or None),
