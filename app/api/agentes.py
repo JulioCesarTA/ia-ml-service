@@ -15,7 +15,7 @@ router = APIRouter()
 @router.post("/monitor-comedor")
 def monitor(m: Mision):
     r = MonitorComedorAgent().run(m.objetivo, m.contexto or {})
-    r["aviso"] = avisos.avisar_monitor(r)
+    r["aviso"] = avisos.avisar_monitor(r, forzar=True)     # «Ejecutar» del panel: siempre responde, aunque el hallazgo sea el mismo
     return r
 
 
