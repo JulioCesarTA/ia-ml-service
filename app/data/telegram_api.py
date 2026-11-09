@@ -29,8 +29,7 @@ def llamar(metodo: str, espera: float = 15, **payload) -> dict:
 
 def enviar_foto(chat: str, png: bytes, pie: str) -> None:
     if n8n.activo():
-        j = n8n.llamar("notificar", {"canal": "telegram-foto", "chat_id": chat, "caption": pie[:1000],
-                                     "png": base64.b64encode(png).decode()}, 35)
+        j = n8n.llamar("notificar-foto", {"chat_id": chat, "caption": pie[:1000], "png": base64.b64encode(png).decode()}, 35)
     else:
         j = httpx.post(_url("sendPhoto"), data={"chat_id": chat, "caption": pie[:1000]},
                        files={"photo": ("qr.png", png, "image/png")}, timeout=30).json()
