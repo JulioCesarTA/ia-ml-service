@@ -29,7 +29,8 @@ def planif(m: Mision):
 @router.post("/inventario-compras")
 def inv(m: Mision):
     r = InventarioComprasAgent().run(m.objetivo, m.contexto or {})
-    r["propuestaCompra"] = avisos.proponer_inventario(r, forzar=True)
+    # El flujo nocturno de n8n no fuerza: si la misma alerta sigue vigente, no la repite cada noche
+    r["propuestaCompra"] = avisos.proponer_inventario(r, forzar=not (m.contexto or {}).get("automatico"))
     return r
 
 
