@@ -1,14 +1,16 @@
 """Al pulsar «Ejecutar» en un agente, los administradores reciben un push en el celular."""
 import pytest
 
-from app.services.agentes import avisos
+from app.main import contenedor
+
+avisos = contenedor.avisos       # el caso de uso ya armado con sus adaptadores (base local de la prueba)
 
 
 @pytest.fixture
 def enviados(monkeypatch):
     lista = []
     monkeypatch.setattr(avisos.push, "enviar_a_roles", lambda roles, titulo, cuerpo, datos=None: lista.append((roles, titulo, cuerpo, datos)))
-    monkeypatch.setattr(avisos.telegram_bot, "encolar", lambda *a, **k: None)
+    monkeypatch.setattr(avisos.cola, "encolar", lambda *a, **k: None)
     return lista
 
 
@@ -64,6 +66,6 @@ def test_un_fallo_de_firebase_no_detiene_al_agente(monkeypatch):
     def falla(*a, **k):
         raise RuntimeError("firebase caído")
     monkeypatch.setattr(avisos.push, "enviar_a_roles", falla)
-    monkeypatch.setattr(avisos.telegram_bot, "encolar", lambda *a, **k: None)
+    monkeypatch.setattr(avisos.cola, "encolar", lambda *a, **k: None)
     res = avisos.proponer_menu(_plan("2031-02-02"), forzar=True)
     assert res["nueva"] is True

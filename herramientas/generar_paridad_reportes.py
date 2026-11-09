@@ -18,7 +18,7 @@ import httpx
 import urllib3
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from app.services.reportes import catalogo, lenguaje, motor  # noqa: E402
+from app.domain.reportes import catalogo, lenguaje, motor  # noqa: E402
 
 urllib3.disable_warnings()
 SERVIDOR = os.getenv("COMEDOR_API", "https://44.228.1.64:8080")

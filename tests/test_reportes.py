@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from app.services.reportes import lenguaje, motor
+from app.domain.reportes import lenguaje, motor
 
 HOY = date(2026, 11, 8)      # domingo
 

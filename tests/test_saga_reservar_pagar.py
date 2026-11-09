@@ -1,7 +1,7 @@
 """Reservar primero y pagar después (con servicios falsos, sin red ni DynamoDB)."""
 import pytest
 
-from app.services.saga import orchestrator as orq
+from app.application.saga.orquestador import SagaOrchestrator
 
 
 class Mundo:
@@ -37,21 +37,39 @@ class Mundo:
     def devolver_pago(self, pid): self.pagos[pid]["estado"] = "devuelto"
 
 
+class AlmacenEnMemoria:
+    """Puerto AlmacenSagas (DynamoDB) en memoria: la idempotencia vive en el mundo."""
+
+    def __init__(self, m: Mundo):
+        self.m = m
+
+    def asegurar_tablas(self): pass
+    def bloquear_idempotencia(self, clave, respuesta=None):
+        if clave in self.m.idem: return self.m.idem[clave]
+        self.m.idem[clave] = {}
+        return None
+    def guardar_respuesta_idempotencia(self, clave, respuesta): self.m.idem[clave] = respuesta
+    def guardar_saga(self, *a, **k): pass
+    def obtener_saga(self, saga_id): return None
+
+
+class Orq:
+    """Arma un orquestador nuevo por llamada (como el router), con el mundo como menú, reservas y pagos."""
+    m: Mundo = None
+
+    @classmethod
+    def SagaOrchestrator(cls):
+        return SagaOrchestrator(cls.m, cls.m, cls.m, AlmacenEnMemoria(cls.m))
+
+
+orq = Orq
+
+
 @pytest.fixture
 def mundo(monkeypatch):
     def armar(**kw):
         m = Mundo(**kw)
-        for n in ("beca", "crear_reserva", "obtener_reserva", "confirmar_reserva", "cancelar_reserva", "apartar_porcion", "liberar_porcion", "cobrar", "devolver_pago"):
-            monkeypatch.setattr(orq.srv, n, getattr(m, n))
-        d = orq.dynamo_client
-        def lock(clave, resp=None):
-            if clave in m.idem: return m.idem[clave]
-            m.idem[clave] = {}
-            return None
-        monkeypatch.setattr(d, "ensure_tables", lambda: None)
-        monkeypatch.setattr(d, "check_and_lock_idempotency", lock)
-        monkeypatch.setattr(d, "save_idempotency_response", lambda c, r: m.idem.__setitem__(c, r))
-        monkeypatch.setattr(d, "put_saga", lambda *a, **k: None)
+        monkeypatch.setattr(Orq, "m", m)
         return m
     return armar
 
@@ -94,7 +112,7 @@ def test_beca_sin_cupo_paga_como_cualquiera(mundo):
 def test_si_apartar_falla_se_cancela_la_reserva(mundo, monkeypatch):
     m = mundo()
     def mal(*a): raise RuntimeError("sin cupo")
-    monkeypatch.setattr(orq.srv, "apartar_porcion", mal)
+    monkeypatch.setattr(m, "apartar_porcion", mal)
     with pytest.raises(RuntimeError):
         orq.SagaOrchestrator().reservar(pedido())
     assert [r["estado"] for r in m.reservas.values()] == ["cancelada"]

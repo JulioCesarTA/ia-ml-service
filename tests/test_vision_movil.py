@@ -4,8 +4,12 @@ import uuid
 import numpy as np
 import pytest
 
-from app.data import repo_vision, s3_fotos
-from app.services.analitica import vision
+from app.domain import fotos
+from app.main import contenedor
+
+vision = contenedor.vision                   # caso de uso ServicioVision con sus adaptadores reales (SQLite, disco, S3)
+repo_vision = contenedor.repo_vision
+s3_fotos = contenedor.s3
 
 DIM = vision.DIM
 
@@ -78,6 +82,6 @@ def test_sin_s3_configurado_la_subida_avisa_y_la_foto_no_se_rompe(monkeypatch):
 
 def test_claves_de_s3_solo_dentro_de_las_carpetas_permitidas():
     for mala in ("../etc/passwd", "otra/carpeta/x.jpg", "bandejas/../x", "bandejas/", ""):
-        assert not s3_fotos.CLAVE_VALIDA.match(mala)
-    assert s3_fotos.CLAVE_VALIDA.match("bandejas/2026/11/abc123.jpg")
-    assert s3_fotos.clave_foto("ref", "abc", "2026-11-05") == "referencias/2026/11/abc.jpg"
+        assert not fotos.CLAVE_VALIDA.match(mala)
+    assert fotos.CLAVE_VALIDA.match("bandejas/2026/11/abc123.jpg")
+    assert fotos.clave_foto("ref", "abc", "2026-11-05") == "referencias/2026/11/abc.jpg"

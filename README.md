@@ -5,7 +5,7 @@ Modelos de ML/DL, agentes de IA, orquestador de sagas, reportes generativos, KPI
 | | |
 |---|---|
 | Stack | Python 3.12 · FastAPI |
-| Arquitectura de código | En capas (api → services → data/models) |
+| Arquitectura de código | Hexagonal (puertos y adaptadores): `app/domain` ← `app/application` (+ `ports`) ← `app/infrastructure/adapters` (inbound/outbound); `app/main.py` es la raíz de composición |
 | Base de datos | PostgreSQL de lectura CQRS + DynamoDB |
 | Nube de despliegue | AWS (EKS) |
 | Puerto local | `8084` (dentro del contenedor, `8080`) |

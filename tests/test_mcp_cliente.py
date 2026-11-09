@@ -2,8 +2,8 @@
 import httpx
 import pytest
 
-from app.data import mcp_cliente
-from app.data.mcp_tools import McpToolClient
+from app.infrastructure.adapters.outbound.http import mcp_cliente
+from app.infrastructure.adapters.outbound.http.mcp_herramientas import McpToolClient
 
 
 class ServidorFalso:

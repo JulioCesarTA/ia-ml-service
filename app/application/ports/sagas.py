@@ -1,0 +1,16 @@
+"""Puerto de salida del estado de las sagas y de la idempotencia (DynamoDB en producción). SPEC §5 y §6."""
+from typing import Protocol
+
+
+class AlmacenSagas(Protocol):
+    def asegurar_tablas(self) -> None: ...
+
+    def bloquear_idempotencia(self, clave: str, respuesta: dict | None = None) -> dict | None:
+        """Reserva la clave. None si es la primera vez; si ya existía, la respuesta guardada."""
+        ...
+
+    def guardar_respuesta_idempotencia(self, clave: str, respuesta: dict) -> None: ...
+
+    def guardar_saga(self, saga_id: str, datos: dict) -> None: ...
+
+    def obtener_saga(self, saga_id: str) -> dict | None: ...

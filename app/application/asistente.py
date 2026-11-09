@@ -1,0 +1,358 @@
+"""Asistente de Telegram del comedor (reemplaza al de WhatsApp).
+
+1) Pide el correo institucional y averigua tu usuario y rol. Administrador, cocinero, caja y nutricionista
+   confirman además su contraseña (con ella se aprueban cosas), y el mensaje con la contraseña se borra.
+2) Menú de botones: Menú, Quién soy, Reservar (estudiantes) y Pendientes (administradores).
+3) Reservar: con beca vigente se reserva sin pagar; sin beca se entrega un QR para pagar con Stripe y,
+   cuando el pago se acredita, llega la confirmación con su QR de ingreso y la factura de Stripe.
+"""
+import base64
+import time
+from datetime import date
+from typing import Callable
+
+from app.application.identidad import ServicioIdentidad
+from app.application.ports.comedor import ServicioPagos
+from app.application.ports.externos import HerramientasMcp
+from app.application.ports.repositorios import RepositorioPagosTelegram
+from app.application.propuestas import ServicioPropuestas
+from app.application.saga.orquestador import SagaOrchestrator
+from app.application.telegram_bot import ServicioTelegram, boton
+from app.domain.reportes.motor import norm_simple as _norm      # minúsculas y sin acentos
+
+TURNOS = {"D": "DESAYUNO", "A": "ALMUERZO", "C": "CENA"}
+ETIQ_TURNO = {"DESAYUNO": "Desayuno", "ALMUERZO": "Almuerzo", "CENA": "Cena"}
+ETIQ_ROL = {"administrador": "Administrador", "cocinero": "Cocinero", "caja": "Caja",
+            "nutricionista": "Nutricionista", "estudiante": "Estudiante"}
+MONTO_RACION = 10
+VENCE_PAGO_S = 30 * 60
+
+# Quién puede reservar por Telegram: los estudiantes y también el administrador (que paga su ración con QR, sin beca).
+PUEDEN_RESERVAR = {"estudiante", "administrador"}
+
+
+def _png(data_uri: str) -> bytes:
+    return base64.b64decode(data_uri.split(",", 1)[1])
+
+
+def _puede_reservar(roles: list[str]) -> bool:
+    return bool(set(roles) & PUEDEN_RESERVAR)
+
+
+def _teclado(roles: list[str]) -> list[list[dict]]:
+    filas = [[boton("📋 Menú", "m:menu"), boton("🙋 Quién soy", "m:quien")]]
+    if _puede_reservar(roles):
+        filas.append([boton("🍽️ Reservar", "m:res")])
+    if "administrador" in roles:
+        filas.append([boton("⏳ Pendientes", "m:pend")])
+    filas.append([boton("🔁 Cambiar de cuenta", "m:cambiar")])
+    return filas
+
+
+class Asistente:
+    def __init__(self, tg: ServicioTelegram, identidad: ServicioIdentidad, propuestas: ServicioPropuestas,
+                 sagas: Callable[[], SagaOrchestrator], mcp: HerramientasMcp, pagos: ServicioPagos,
+                 pagos_tg: RepositorioPagosTelegram, stripe_de_prueba: Callable[[], bool]):
+        # Atención al estudiante: menú y beca se piden por MCP a sus microservicios (la reserva la hace la Saga 1).
+        self.tg = tg
+        self._identidad = identidad
+        self._propuestas = propuestas
+        self._sagas = sagas
+        self._tools = mcp
+        self._pagos = pagos
+        self._pagos_tg = pagos_tg
+        self._stripe_de_prueba = stripe_de_prueba
+
+    def _menu_principal(self, cid: str, ch: dict, intro: str) -> None:
+        self.tg.enviar(cid, intro, _teclado(ch["roles"]))
+
+    # ----------------------------- datos del comedor -----------------------------
+
+    def _dias(self, turno: str) -> list[tuple[str, dict]]:
+        """Un bloque por día futuro (fusiona menús repetidos): [(fecha, {plato: {menuId, cupo, disponibles}})]."""
+        menus = self._tools.consultar_menu(turno)
+        hoy = date.today().isoformat()
+        dias: dict[str, dict] = {}
+        for m in menus:
+            if m.get("fecha", "") < hoy:
+                continue
+            platos = dias.setdefault(m["fecha"], {})
+            for pid, p in (m.get("porciones") or {}).items():
+                previo = platos.get(pid)
+                if not previo or p["disponibles"] > previo["disponibles"]:
+                    platos[pid] = {"menuId": m["id"], "cupo": p["cupo"], "disponibles": p["disponibles"]}
+        return sorted(dias.items())
+
+    # ----------------------------- identificación -----------------------------
+
+    def _pedir_correo(self, cid: str, texto: str | None = None) -> None:
+        self._identidad.guardar_chat(cid, estado="pide_email", intentos=0)
+        self.tg.enviar(cid, texto or "Hola 👋 Soy el asistente del Comedor Universitario UAGRM.\n\nPara saber quién eres, escribe tu correo institucional (por ejemplo nombre@uagrm.edu.bo).")
+
+    def _vincular(self, cid: str, u: dict) -> None:
+        ch = self._identidad.guardar_chat(cid, estado="listo", email=u["email"], username=u["username"], nombre=u["nombre"],
+                                          roles=u["roles"], intentos=0)
+        self._menu_principal(cid, ch, f"✅ Listo, {u['nombre']}. Tu rol es {ETIQ_ROL.get(u['rol'], u['rol'])}.\n\n¿Qué quieres hacer?")
+
+    def _recibir_correo(self, cid: str, texto: str) -> None:
+        try:
+            u = self._identidad.buscar_por_email(texto)
+        except Exception:
+            self.tg.enviar(cid, "No puedo verificar tu identidad en este momento (sin conexión con el sistema). Inténtalo en unos minutos.")
+            return
+        if not u:
+            self.tg.enviar(cid, "No encuentro ese correo en el sistema. Revísalo y escríbelo de nuevo.")
+            return
+        if set(u["roles"]) & self._identidad.PRIVILEGIADOS:
+            self._identidad.guardar_chat(cid, estado="pide_password", email=u["email"], username=u["username"], nombre=u["nombre"],
+                                         roles=u["roles"], intentos=0)
+            self.tg.enviar(cid, f"Hola {u['nombre']}. Tu rol es {ETIQ_ROL.get(u['rol'], u['rol'])}.\n\nPor seguridad confirma tu contraseña del panel de gestión. Borraré tu mensaje apenas lo lea.")
+            return
+        self._vincular(cid, u)
+
+    def _recibir_password(self, cid: str, ch: dict, m: dict) -> None:
+        self.tg.borrar(cid, m["message_id"])
+        try:
+            ok = self._identidad.verificar_password(ch["username"], (m.get("text") or "").strip())
+        except Exception:
+            self.tg.enviar(cid, "No puedo verificar tu contraseña ahora (sin conexión con el sistema). Inténtalo en unos minutos.")
+            return
+        if ok:
+            self._vincular(cid, {"email": ch["email"], "username": ch["username"], "nombre": ch["nombre"], "roles": ch["roles"],
+                                 "rol": self._identidad.rol_principal(ch["roles"])})
+            return
+        intentos = ch["intentos"] + 1
+        if intentos >= 3:
+            self._pedir_correo(cid)
+            self.tg.enviar(cid, "Demasiados intentos fallidos. Empecemos de nuevo.")
+            return
+        self._identidad.guardar_chat(cid, intentos=intentos)
+        self.tg.enviar(cid, f"Contraseña incorrecta. Te quedan {3 - intentos} intento(s).")
+
+    # ----------------------------- opciones del menú -----------------------------
+
+    def _cambiar_cuenta(self, cid: str) -> None:
+        """Cierra la sesión de este chat y pide el correo de otra cuenta."""
+        self._identidad.borrar_chat(cid)
+        self._pedir_correo(cid, "Sesión cerrada ✅ Ya puedes entrar con otra cuenta.\n\nEscribe el correo institucional de la cuenta que quieres usar (por ejemplo nombre@uagrm.edu.bo).")
+
+    def _quien_soy(self, cid: str, ch: dict) -> None:
+        lineas = [f"👤 {ch['nombre']}", f"Usuario: {ch['username']}", f"Correo: {ch['email']}",
+                  "Rol: " + ", ".join(ETIQ_ROL.get(r, r) for r in ch["roles"])]
+        if _puede_reservar(ch["roles"]):
+            b = self._tools.consultar_beca(ch["username"])
+            if b.get("tieneBeca"):
+                lineas.append(f"🎓 Beca {b.get('tipo')}: {b.get('racionesUsadasMes', 0)}/{b.get('cupoRacionesMes', 0)} raciones este mes"
+                              + (" — hoy te cubre." if b.get("cubreHoy") else " — hoy se paga (cupo agotado)."))
+            else:
+                lineas.append(f"Sin beca activa: cada ración cuesta {MONTO_RACION} y se paga con QR.")
+        lineas.append("\nPara entrar con otra cuenta pulsa «Cambiar de cuenta» o escribe /cambiar.")
+        self._menu_principal(cid, ch, "\n".join(lineas))
+
+    def _ver_menu(self, cid: str, turno: str = "ALMUERZO") -> None:
+        dias = self._dias(turno)
+        botones = [[boton(("• " if k == turno else "") + ETIQ_TURNO[k], f"t:{c}") for c, k in TURNOS.items()]]
+        if not dias:
+            self.tg.enviar(cid, f"No hay menú publicado para {ETIQ_TURNO[turno].lower()}.", botones)
+            return
+        lineas = [f"📋 Menú de {ETIQ_TURNO[turno].lower()}"]
+        for fecha, platos in dias[:7]:
+            lineas.append(f"\n📅 {fecha}")
+            lineas += [f"  • {pid.replace('plato-', '')}: {p['disponibles']}/{p['cupo']} disponibles" for pid, p in platos.items()]
+        self.tg.enviar(cid, "\n".join(lineas), botones)
+
+    def _elegir_turno(self, cid: str, ch: dict) -> None:
+        if not _puede_reservar(ch["roles"]):
+            self.tg.enviar(cid, "Las reservas son solo para estudiantes y administradores.")
+            return
+        self.tg.enviar(cid, "¿Para qué turno quieres reservar?",
+                       [[boton(ETIQ_TURNO[k], f"r:T:{c}") for c, k in TURNOS.items()]])
+
+    def _elegir_dia(self, cid: str, c: str) -> None:
+        dias = [(f, p) for f, p in self._dias(TURNOS[c]) if any(x["disponibles"] > 0 for x in p.values())][:7]
+        if not dias:
+            self.tg.enviar(cid, "No hay días con cupo para ese turno.")
+            return
+        self.tg.enviar(cid, f"¿Qué día? ({ETIQ_TURNO[TURNOS[c]].lower()})", [[boton(f, f"r:D:{c}:{f}")] for f, _ in dias])
+
+    def _elegir_plato(self, cid: str, c: str, fecha: str) -> None:
+        platos = dict(self._dias(TURNOS[c])).get(fecha, {})
+        filas = [[boton(f"{pid.replace('plato-', '')} ({p['disponibles']} disp.)", f"r:P:{c}:{fecha}:{pid}")]
+                 for pid, p in platos.items() if p["disponibles"] > 0]
+        if not filas:
+            self.tg.enviar(cid, "Ese día ya no tiene cupos.")
+            return
+        self.tg.enviar(cid, f"¿Qué plato para el {fecha}?", filas)
+
+    def _reservar(self, cid: str, ch: dict, c: str, fecha: str, plato: str) -> None:
+        turno = TURNOS[c]
+        p = dict(self._dias(turno)).get(fecha, {}).get(plato)
+        if not p or p["disponibles"] <= 0:
+            self.tg.enviar(cid, "Ese plato ya no tiene cupo.")
+            return
+        user = ch["username"]
+        beca = self._tools.consultar_beca(user)
+        con_beca = bool(beca.get("tieneBeca") and beca.get("cubreHoy"))
+        try:
+            r = self._sagas().reservar_y_pagar({
+                "estudiante_id": user, "menu_id": p["menuId"], "plato_id": plato, "fecha": fecha, "turno": turno,
+                "metodo_pago": "beca" if con_beca else "qr_bancario", "monto": 0 if con_beca else MONTO_RACION,
+                "idempotency_key": f"tg-{user}-{fecha}-{plato}"})
+        except Exception as e:
+            msg = str(e)
+            self.tg.enviar(cid, "Ya tienes una reserva para ese día." if ("ya ten" in msg.lower() or "duplic" in msg.lower()) else f"No pude reservar: {msg[:150]}")
+            return
+
+        nombre = plato.replace("plato-", "")
+        if r.get("status") == "PENDING_PAYMENT" and r.get("stripe"):
+            s = r["stripe"]
+            self._pagos_tg.guardar_pago(r["reservaId"], cid, s.get("gatewayRef"), nombre, fecha, turno)
+            prueba = "\n\nTarjeta de prueba: 4242 4242 4242 4242 (cualquier fecha futura y CVC)." if self._stripe_de_prueba() else ""
+            self.tg.enviar(cid, f"🧾 Reserva creada: {nombre}, {fecha} ({ETIQ_TURNO[turno].lower()}).\n"
+                                f"Falta el pago de {MONTO_RACION}. Escanea el QR o abre el enlace:\n{s['paymentUrl']}{prueba}\n\n"
+                                "Apenas se acredite el pago te aviso aquí y te envío tu factura de Stripe.",
+                           [[boton("🔄 Ya pagué, verificar", f"v:{r['reservaId']}")]])
+            if s.get("qrDataUri"):
+                self.tg.enviar_foto(cid, _png(s["qrDataUri"]), "QR de pago")
+            return
+        cabecera = "✅ Reserva confirmada con tu beca (sin pago)." if con_beca else "✅ Reserva confirmada."
+        self.tg.enviar(cid, f"{cabecera}\n{nombre}, {fecha} ({ETIQ_TURNO[turno].lower()}).\nMuestra este QR al ingresar:")
+        self._enviar_qr_ingreso(cid, r.get("qr"))
+
+    def _enviar_qr_ingreso(self, cid: str, qr: str | None) -> None:
+        if qr and "::" in qr:
+            self.tg.enviar_foto(cid, _png(qr.split("::", 1)[1]), "QR de ingreso")
+
+    def _pendientes(self, cid: str) -> None:
+        if not self._identidad.es_admin(cid):
+            self.tg.enviar(cid, "Solo un administrador puede ver esto.")
+            return
+        pend = self._propuestas.listar("PENDIENTE")
+        if not pend:
+            self.tg.enviar(cid, "No hay propuestas pendientes. 👌")
+            return
+        for p in pend[:5]:
+            self.tg.enviar(cid, f"{p['titulo']}\n\n{p['resumen']}", self.tg.botones_propuesta(p["id"]))
+
+    # ----------------------------- entrada de mensajes y botones -----------------------------
+
+    def mensaje(self, m: dict) -> None:
+        cid = str(m["chat"]["id"])
+        texto = (m.get("text") or "").strip()
+        if not texto:
+            return
+        t = _norm(texto)
+        ch = self._identidad.chat(cid)
+
+        if t in ("/cambiar", "/cuenta", "cambiar", "cambiar de cuenta", "cambiar cuenta", "/salir", "salir", "cerrar sesion", "logout", "/logout"):
+            self._cambiar_cuenta(cid)
+            return
+        if ch is None:
+            self._pedir_correo(cid)
+            if "@" in texto and not texto.startswith("/"):
+                self._recibir_correo(cid, texto)
+            return
+        if ch["estado"] == "pide_password":
+            self._recibir_password(cid, ch, m)
+            return
+        if ch["estado"] == "pide_email":
+            if "@" in texto and not texto.startswith("/"):
+                self._recibir_correo(cid, texto)
+            else:
+                self.tg.enviar(cid, "Escribe tu correo institucional para identificarte (por ejemplo nombre@uagrm.edu.bo).")
+            return
+
+        if t.startswith("/start") or t in ("hola", "ayuda", "/ayuda"):
+            try:                                   # si cambiaron tus roles en el sistema, se actualizan aquí
+                u = self._identidad.buscar_por_email(ch["email"])
+                if u:
+                    ch = self._identidad.guardar_chat(cid, roles=u["roles"], nombre=u["nombre"])
+            except Exception:
+                pass
+            self._menu_principal(cid, ch, f"Hola {ch['nombre']} 👋 ¿Qué quieres hacer?")
+        elif t in ("menu", "/menu"):
+            self._ver_menu(cid)
+        elif t in ("quien soy", "/quiensoy", "/quien", "/yo", "yo"):
+            self._quien_soy(cid, ch)
+        elif t.startswith("reservar") or t == "/reservar":
+            self._elegir_turno(cid, ch)
+        elif t in ("pendientes", "/pendientes"):
+            self._pendientes(cid)
+        else:
+            self._menu_principal(cid, ch, "No entendí. Elige una opción:")
+
+    def boton(self, cb: dict) -> None:
+        cid = str(cb["message"]["chat"]["id"])
+        ch = self._identidad.chat(cid)
+        if not ch or ch["estado"] != "listo":
+            self.tg.responder_boton(cb["id"], "Escribe /start para identificarte")
+            return
+        d = cb["data"].split(":")
+        if d[0] == "v":
+            ok = self._verificar_pago(d[1])
+            self.tg.responder_boton(cb["id"], "Pago acreditado" if ok else "Todavía no figura el pago. Complétalo y vuelve a verificar.")
+            return
+        self.tg.responder_boton(cb["id"])
+        if d[0] == "m":
+            {"menu": lambda: self._ver_menu(cid), "quien": lambda: self._quien_soy(cid, ch), "res": lambda: self._elegir_turno(cid, ch),
+             "pend": lambda: self._pendientes(cid), "cambiar": lambda: self._cambiar_cuenta(cid)}.get(d[1], lambda: None)()
+        elif d[0] == "t":
+            self._ver_menu(cid, TURNOS.get(d[1], "ALMUERZO"))
+        elif d[0] == "r" and _puede_reservar(ch["roles"]):
+            if d[1] == "T":
+                self._elegir_dia(cid, d[2])
+            elif d[1] == "D":
+                self._elegir_plato(cid, d[2], d[3])
+            elif d[1] == "P":
+                self._reservar(cid, ch, d[2], d[3], ":".join(d[4:]))
+
+    # ----------------------------- pagos pendientes y factura -----------------------------
+
+    def _verificar_pago(self, reserva_id: str) -> bool:
+        f = self._pagos_tg.pago(reserva_id)
+        if not f or f["estado"] not in ("esperando_pago", "vencido"):
+            return bool(f and f["estado"] in ("esperando_factura", "completado"))
+        try:
+            r = self._sagas().confirmar_pago(reserva_id, f["referencia"])
+        except Exception:
+            return False
+        if not r.get("confirmada"):
+            return False
+        self._pagos_tg.marcar_pago(reserva_id, "esperando_factura")
+        self.tg.enviar(f["chat_id"], f"✅ Pago recibido. Tu reserva está confirmada: {f['plato']}, {f['fecha']} ({ETIQ_TURNO.get(f['turno'], '').lower()}).\nMuestra este QR al ingresar:")
+        self._enviar_qr_ingreso(f["chat_id"], r.get("qr"))
+        self._enviar_factura(self._pagos_tg.pago(reserva_id))
+        return True
+
+    def _enviar_factura(self, f: dict) -> None:
+        """La factura de Stripe tarda unos segundos en emitirse: se reintenta antes de conformarse con el recibo."""
+        try:
+            j = self._pagos.recibo(f["referencia"])
+        except Exception:
+            j = {}
+        if j.get("url") and (j.get("tipo") == "factura" or f["intentos"] >= 6):
+            etiqueta = "factura" if j.get("tipo") == "factura" else "recibo"
+            self.tg.enviar(f["chat_id"], f"🧾 Tu {etiqueta} de Stripe:\n{j['url']}")
+            if j.get("pdf"):
+                try:
+                    self.tg.enviar_documento_url(f["chat_id"], j["pdf"], f"{etiqueta.capitalize()} en PDF")
+                except Exception:
+                    pass
+            self._pagos_tg.marcar_pago(f["reserva_id"], "completado")
+            return
+        n = f["intentos"] + 1
+        if n >= 15:
+            self.tg.enviar(f["chat_id"], "Tu pago está confirmado, pero Stripe todavía no emitió la factura. La podrás ver en tu portal.")
+            self._pagos_tg.marcar_pago(f["reserva_id"], "completado")
+        else:
+            self._pagos_tg.marcar_pago(f["reserva_id"], "esperando_factura", n)
+
+    def revisar_pagos(self) -> None:
+        for f in self._pagos_tg.pagos_en_curso():
+            if f["estado"] == "esperando_factura":
+                self._enviar_factura(f)
+            elif time.time() - f["creado"] > VENCE_PAGO_S:
+                self._pagos_tg.marcar_pago(f["reserva_id"], "vencido")
+                self.tg.enviar(f["chat_id"], "No recibí tu pago en 30 minutos. Si ya pagaste, pulsa «Ya pagué, verificar» en el mensaje de la reserva.")
+            else:
+                self._verificar_pago(f["reserva_id"])
