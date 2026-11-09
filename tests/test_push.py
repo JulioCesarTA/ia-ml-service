@@ -112,6 +112,27 @@ def test_los_datos_van_como_texto_y_los_textos_se_recortan(fcm):
     assert m["datos"] == {"n": "5", "ok": "True"} and len(m["titulo"]) == 100 and len(m["cuerpo"]) == 400
 
 
+def test_el_mensaje_a_firebase_se_guarda_si_el_telefono_esta_sin_red_y_no_se_acumula(monkeypatch):
+    """Sin internet en el teléfono, Firebase conserva el aviso 2 días y entrega solo el último de cada tipo."""
+    capturado = {}
+
+    class Resp:
+        status_code, text = 200, "{}"
+
+    def falso_post(url, headers=None, json=None, timeout=None):
+        capturado.update(url=url, cuerpo=json)
+        return Resp()
+    monkeypatch.setattr(push, "_info", lambda: {"project_id": "demo"})
+    monkeypatch.setattr(push, "_token_acceso", lambda: "t")
+    monkeypatch.setattr(push.httpx, "post", falso_post)
+    ok, muerto = push._enviar_fcm("tok" * 10, "T", "C", {"tipo": "stock_bajo"})
+    a = capturado["cuerpo"]["message"]["android"]
+    assert ok and not muerto
+    assert a["ttl"] == "172800s" and a["collapse_key"] == "stock_bajo" and a["priority"] == "HIGH"
+    assert a["notification"]["channel_id"] == "avisos_comedor"
+    assert capturado["url"].endswith("/projects/demo/messages:send")
+
+
 def test_sin_credencial_el_envio_no_rompe_nada(monkeypatch):
     monkeypatch.setattr(push, "_info", lambda: None)
     t = _tok()

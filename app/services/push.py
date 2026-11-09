@@ -17,6 +17,10 @@ import httpx
 from app.data import repo_dispositivos
 
 ALCANCE = "https://www.googleapis.com/auth/firebase.messaging"
+# Un push necesita internet para viajar, pero si el teléfono está SIN conexión Firebase lo guarda y lo entrega apenas
+# vuelva la red. Se guarda 2 días (un aviso de stock de la semana pasada ya no sirve) y los avisos del mismo tipo se
+# reemplazan entre sí: el teléfono recibe el último, no una pila de alertas repetidas.
+VIGENCIA = "172800s"
 CANAL = "avisos_comedor"
 _estado = {"ultimo_envio": None, "ultimo_error": None, "enviados": 0}
 _cred = {"info": None, "token": None, "vence": 0.0}
@@ -68,7 +72,8 @@ def _enviar_fcm(token: str, titulo: str, cuerpo: str, datos: dict[str, str]) -> 
                 "token": token,
                 "notification": {"title": titulo, "body": cuerpo},
                 "data": datos,
-                "android": {"priority": "HIGH", "notification": {"channel_id": CANAL}},
+                "android": {"priority": "HIGH", "ttl": VIGENCIA, "collapse_key": datos.get("tipo", "aviso"),
+                            "notification": {"channel_id": CANAL}},
             }})
     except Exception as e:                                   # sin red, credencial inválida, etc.
         _estado["ultimo_error"] = f"{type(e).__name__}: {str(e)[:120]}"
