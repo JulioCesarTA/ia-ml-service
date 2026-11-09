@@ -19,13 +19,19 @@ def _valor(v):
     return round(v, 2) if isinstance(v, float) else v
 
 
-def construir(roles: list[str]) -> dict:
-    permitidos = set()
+def permitidos(roles: list[str]) -> set[str]:
+    """Los conjuntos de datos que ese rol puede consultar (SPEC §10: cada quien ve solo lo suyo)."""
+    out: set[str] = set()
     for r in roles:
-        permitidos |= catalogo.PERMISOS.get(r, set())
-    out, errores = {}, {}
+        out |= catalogo.PERMISOS.get(r, set())
+    return out
+
+
+def registros(roles: list[str]) -> tuple[dict[str, list[dict]], dict[str, str]]:
+    """{dataset: [fila como diccionario]} con los valores ya normalizados, y los conjuntos que fallaron."""
+    datos, errores = {}, {}
     for did in catalogo.DATASETS:
-        if did not in permitidos:
+        if did not in permitidos(roles):
             continue
         try:
             df = fuentes.cargar(did)
@@ -33,5 +39,14 @@ def construir(roles: list[str]) -> dict:
             errores[did] = str(e)[:120]
             continue
         cols = [c["nombre"] for c in catalogo.DATASETS[did]["columnas"]]
-        out[did] = {"columnas": cols, "filas": [[_valor(r[c]) for c in cols] for r in df.to_dict("records")]}
+        datos[did] = [{c: _valor(r[c]) for c in cols} for r in df.to_dict("records")]
+    return datos, errores
+
+
+def construir(roles: list[str]) -> dict:
+    datos, errores = registros(roles)
+    out = {}
+    for did, filas in datos.items():
+        cols = [c["nombre"] for c in catalogo.DATASETS[did]["columnas"]]
+        out[did] = {"columnas": cols, "filas": [[r[c] for c in cols] for r in filas]}
     return {"generado": datetime.now().strftime("%Y-%m-%d %H:%M"), "datasets": out, "errores": errores}

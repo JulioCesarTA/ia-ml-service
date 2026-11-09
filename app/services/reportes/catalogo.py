@@ -11,6 +11,7 @@ def col(nombre: str, etiqueta: str, tipo: str, sinonimos: list[str] | None = Non
 
 DATASETS: dict[str, dict] = {
     "reservas": {
+        "raices": ['reserv', 'racion', 'servid'],
         "etiqueta": "Reservas de raciones",
         "descripcion": "Cada ración reservada: quién, qué plato, turno, día y estado.",
         "sinonimos": ["reserva", "reservas", "reservaciones", "racion", "raciones", "comidas", "pedidos", "servidas", "asistencia", "comensales"],
@@ -31,6 +32,7 @@ DATASETS: dict[str, dict] = {
                      "los 5 platos más reservados"],
     },
     "pagos": {
+        "raices": ['pag', 'cobr', 'recaud'],
         "etiqueta": "Pagos y recaudación",
         "descripcion": "Cada cobro: monto, método, estado, quién pagó y cuándo.",
         "sinonimos": ["pago", "pagos", "cobro", "cobros", "cobrado", "cobrados", "ingreso", "ingresos", "recaudacion", "recaudado",
@@ -51,6 +53,7 @@ DATASETS: dict[str, dict] = {
         "ejemplos": ["total cobrado por mes", "pagos mayores a 5 bolivianos de este mes en pdf", "recaudación por método de pago en excel"],
     },
     "estudiantes": {
+        "raices": ['estudiant', 'alumn'],
         "etiqueta": "Estudiantes",
         "descripcion": "Padrón de estudiantes con su beca, cuántas reservas hicieron y cuánto pagaron.",
         "sinonimos": ["estudiante", "estudiantes", "alumno", "alumnos", "padron", "usuarios", "registrados", "matriculados"],
@@ -70,6 +73,7 @@ DATASETS: dict[str, dict] = {
         "ejemplos": ["estudiantes con beca", "los 10 estudiantes que más reservaron", "estudiantes sin beca ordenados por nombre en excel"],
     },
     "becas": {
+        "raices": ['becari', 'becad'],
         "etiqueta": "Becas",
         "descripcion": "Becas asignadas: tipo, cupo mensual, raciones usadas y vigencia.",
         "sinonimos": ["beca", "becas", "becario", "becarios", "becada", "becadas", "becado", "becados"],
@@ -92,6 +96,7 @@ DATASETS: dict[str, dict] = {
         "ejemplos": ["becas con menos uso", "becarios inactivos", "becas por tipo"],
     },
     "menus": {
+        "raices": ['menu', 'cupo', 'porcion'],
         "etiqueta": "Menús y cupos",
         "descripcion": "Platos publicados por día y turno con su cupo, porciones apartadas y disponibles.",
         "sinonimos": ["menu", "menus", "plato", "platos", "cupo", "cupos", "porciones", "disponibles", "publicados", "ocupacion"],
@@ -111,6 +116,7 @@ DATASETS: dict[str, dict] = {
         "ejemplos": ["platos más pedidos de la semana", "menús con menos cupos disponibles", "ocupación promedio por plato en excel"],
     },
     "insumos": {
+        "raices": ['insum', 'invent', 'vencim'],
         "etiqueta": "Insumos e inventario",
         "descripcion": "Stock de cada insumo, su mínimo, lotes y próximo vencimiento.",
         "sinonimos": ["insumo", "insumos", "inventario", "stock", "almacen", "ingredientes", "productos", "lotes", "existencias", "vencimiento", "vencer"],
@@ -131,6 +137,7 @@ DATASETS: dict[str, dict] = {
         "ejemplos": ["insumos con stock bajo", "insumos que vencen en los próximos 7 días", "inventario ordenado por stock ascendente en pdf"],
     },
     "desperdicio": {
+        "raices": ['desperdic', 'sobrant', 'merma'],
         "etiqueta": "Desperdicio (fotos de bandejas)",
         "descripcion": "Bandejas analizadas con TensorFlow: porcentaje que sobró y que se comió.",
         "sinonimos": ["desperdicio", "desperdicios", "sobrante", "sobrantes", "merma", "bandeja", "bandejas", "fotos", "restante", "desperdiciado"],
@@ -164,4 +171,6 @@ def columna(dataset: str, nombre: str) -> dict:
 
 
 def etiqueta(dataset: str, nombre: str) -> str:
-    return columna(dataset, nombre)["etiqueta"]
+    """La etiqueta de la columna; si el nombre no es una columna (p. ej. «cantidad»), se devuelve tal cual."""
+    c = next((c for c in DATASETS[dataset]["columnas"] if c["nombre"] == nombre), None)
+    return c["etiqueta"] if c else nombre
