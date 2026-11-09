@@ -1,7 +1,6 @@
 """Al pulsar «Ejecutar» en un agente, los administradores reciben un push en el celular."""
 import pytest
 
-from app.services import propuestas
 from app.services.agentes import avisos
 
 

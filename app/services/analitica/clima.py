@@ -61,9 +61,6 @@ def actualizar() -> bool:
     return bool(_mem["en_linea"])
 
 
-def en_linea() -> bool | None:
-    return _mem["en_linea"]
-
 
 def temperatura(fecha: str) -> float | None:
     return temperaturas().get(fecha)

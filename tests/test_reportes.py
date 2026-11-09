@@ -196,7 +196,8 @@ def test_elige_las_columnas_pedidas():
 
 
 def test_reconoce_el_formato_de_salida():
-    for texto, salida in [("pagos en pdf", "pdf"), ("pagos en excel", "excel"), ("pagos en csv", "csv")]:
+    # solo pantalla, PDF y Excel: el CSV ya no es un formato y el reporte sale en pantalla
+    for texto, salida in [("pagos en pdf", "pdf"), ("pagos en excel", "excel"), ("pagos en csv", "pantalla")]:
         r, _ = pedir(texto)
         assert r["spec"]["salida"] == salida
 

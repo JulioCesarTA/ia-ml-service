@@ -46,7 +46,6 @@ def _dentro_vencimiento(platos_candidatos: list[str], insumos_por_vencer: set[st
 class PlanificadorMenuAgent:
     def run(self, objetivo: str, contexto: dict) -> dict:
         tools = McpToolClient()
-        stock = tools.ver_stock_insumo() or []
         bajos = tools.ver_stock_bajo() or []
         por_vencer = tools.lotes_por_vencer(dias=10)
         insumos_por_vencer_set = {str(x.get("nombre","")).upper() for x in por_vencer}

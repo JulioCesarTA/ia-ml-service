@@ -22,5 +22,3 @@ PERIODOS_VACACIONES = ([(date(a, 7, 10), date(a, 7, 25)) for a in ANIOS]
                        + [(date(a, 12, 20), date(a + 1, 2, 1)) for a in ANIOS] + [(date(2023, 1, 1), date(2023, 2, 1))])
 
 
-def en_periodo(f: date, periodos) -> int:
-    return int(any(a <= f <= b for a, b in periodos))

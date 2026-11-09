@@ -32,5 +32,5 @@ docker compose up -d --build
 ## CI/CD
 
 - `.github/workflows/ci.yml`: pruebas y construcción de la imagen en cada push y pull request.
-- `.github/workflows/cd.yml`: construye y sube la imagen al registro de AWS y aplica el manifiesto de
-  `comedor-infra/infra/k8s/aws/ia-ml-service/`. Secretos necesarios: ver el propio archivo.
+- `.github/workflows/cd.yml`: construye y sube la imagen al registro de AWS (ECR) y reinicia el servicio en EKS.
+  El manifiesto lo genera `comedor-infra/infra/k8s/eks/generar_aws.py`. Secretos necesarios: ver el propio archivo.

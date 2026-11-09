@@ -9,11 +9,11 @@
 import base64
 import os
 import time
-import unicodedata
 from datetime import date
 
 from app.data import comedor_http, repo_telegram
 from app.services import identidad, propuestas, telegram_bot as tg
+from app.services.reportes.motor import norm_simple as _norm      # minúsculas y sin acentos
 from app.services.saga.orchestrator import SagaOrchestrator
 
 TURNOS = {"D": "DESAYUNO", "A": "ALMUERZO", "C": "CENA"}
@@ -22,11 +22,6 @@ ETIQ_ROL = {"administrador": "Administrador", "cocinero": "Cocinero", "caja": "C
             "nutricionista": "Nutricionista", "estudiante": "Estudiante"}
 MONTO_RACION = 10
 VENCE_PAGO_S = 30 * 60
-
-
-def _norm(t: str) -> str:
-    t = unicodedata.normalize("NFD", t.lower().strip())
-    return "".join(c for c in t if unicodedata.category(c) != "Mn")
 
 
 def _png(data_uri: str) -> bytes:

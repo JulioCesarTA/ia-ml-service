@@ -4,7 +4,7 @@ Entiende: qué datos (reservas, pagos, estudiantes, becas, menús, insumos, desp
 ("mayores a 5", "turno almuerzo", "sin beca"), fechas ("noviembre", "del 1 al 15 de octubre", "últimos 30 días", "2025",
 "primer trimestre"), agrupaciones ("por mes", "por turno"), medidas ("total", "promedio", "cuántos"), rankings
 ("los 10 mayores", "los 5 más pedidos"), orden ("ascendente", "de mayor a menor") y la salida ("en pantalla", "PDF",
-"Excel", "CSV"). También sigue la conversación ("ahora por mes", "solo de almuerzo") y corrige errores de tipeo.
+"Excel"). También sigue la conversación ("ahora por mes", "solo de almuerzo") y corrige errores de tipeo.
 
 No escribe SQL ni consultas libres: solo rellena esta estructura, que el motor valida contra el catálogo (SPEC §10).
 """
@@ -13,7 +13,7 @@ import re
 from datetime import date, timedelta
 
 from app.services.reportes import catalogo, motor
-from app.services.reportes.motor import DIAS_N, MESES_N, dmy, norm_simple, sin_acentos
+from app.services.reportes.motor import MESES_N, dmy, sin_acentos
 
 
 class NoEntendido(ValueError):
@@ -36,7 +36,7 @@ TIEMPO = {"dia": "dia", "dias": "dia", "diario": "dia", "diaria": "dia", "diaria
 COL_NUM = {"pagos": "monto", "estudiantes": "reservas", "becas": "uso", "menus": "apartadas",
            "insumos": "stock", "desperdicio": "restante", "reservas": None}
 FORMATOS = [("pdf", r"\bpdf\b"), ("excel", r"\b(excel|xlsx|xls|hoja de calculo|planilla|spreadsheet)\b"),
-            ("csv", r"\bcsv\b"), ("pantalla", r"\b(en pantalla|por pantalla|en la pantalla|aqui)\b")]
+            ("pantalla", r"\b(en pantalla|por pantalla|en la pantalla|aqui)\b")]
 SIN_PALABRA = {"media": "beca"}          # valores ambiguos: solo cuentan junto a esta palabra
 
 
@@ -755,7 +755,7 @@ def entendido(spec: dict) -> str:
     cond = motor.describir(spec)
     if cond:
         partes.append("(" + "; ".join(cond) + ")")
-    salida = {"pantalla": "en pantalla", "pdf": "en PDF", "excel": "en Excel", "csv": "en CSV"}.get(spec.get("salida") or "pantalla", "en pantalla")
+    salida = {"pantalla": "en pantalla", "pdf": "en PDF", "excel": "en Excel"}.get(spec.get("salida") or "pantalla", "en pantalla")
     return f"{' '.join(partes)}, {salida}."
 
 

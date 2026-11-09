@@ -1,7 +1,7 @@
 """Motor de consultas de los reportes: ejecuta la consulta estructurada que arma el lenguaje natural.
 
-Es la ÚNICA implementación del motor (antes estaba repetida en cada cliente): la usan el portal web, el panel de
-inteligencia de negocio y la app móvil a través de `POST /reportes/consulta`.
+Es la implementación de referencia: el navegador (motor.js) y el teléfono (motor.dart) la repiten para funcionar
+sin internet, y el archivo de paridad generado con esta versión comprueba que los tres dan lo mismo.
 
 Consulta (spec):
     dataset   reservas | pagos | estudiantes | becas | menus | insumos | desperdicio
