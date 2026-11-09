@@ -12,9 +12,13 @@ import time
 from datetime import date
 
 from app.data import comedor_http, repo_telegram
+from app.data.mcp_tools import McpToolClient
 from app.services import identidad, propuestas, telegram_bot as tg
 from app.services.reportes.motor import norm_simple as _norm      # minúsculas y sin acentos
 from app.services.saga.orchestrator import SagaOrchestrator
+
+# Atención al estudiante: menú y beca se piden por MCP a sus microservicios (la reserva la hace la Saga 1).
+_tools = McpToolClient()
 
 TURNOS = {"D": "DESAYUNO", "A": "ALMUERZO", "C": "CENA"}
 ETIQ_TURNO = {"DESAYUNO": "Desayuno", "ALMUERZO": "Almuerzo", "CENA": "Cena"}
@@ -56,7 +60,7 @@ def _menu_principal(cid: str, ch: dict, intro: str) -> None:
 
 def _dias(turno: str) -> list[tuple[str, dict]]:
     """Un bloque por día futuro (fusiona menús repetidos): [(fecha, {plato: {menuId, cupo, disponibles}})]."""
-    menus = comedor_http.menus_semana(turno)
+    menus = _tools.consultar_menu(turno)
     hoy = date.today().isoformat()
     dias: dict[str, dict] = {}
     for m in menus:
@@ -132,7 +136,7 @@ def _quien_soy(cid: str, ch: dict) -> None:
     lineas = [f"👤 {ch['nombre']}", f"Usuario: {ch['username']}", f"Correo: {ch['email']}",
               "Rol: " + ", ".join(ETIQ_ROL.get(r, r) for r in ch["roles"])]
     if _puede_reservar(ch["roles"]):
-        b = comedor_http.beca(ch["username"])
+        b = _tools.consultar_beca(ch["username"])
         if b.get("tieneBeca"):
             lineas.append(f"🎓 Beca {b.get('tipo')}: {b.get('racionesUsadasMes', 0)}/{b.get('cupoRacionesMes', 0)} raciones este mes"
                           + (" — hoy te cubre." if b.get("cubreHoy") else " — hoy se paga (cupo agotado)."))
@@ -188,7 +192,7 @@ def _reservar(cid: str, ch: dict, c: str, fecha: str, plato: str) -> None:
         tg.enviar(cid, "Ese plato ya no tiene cupo.")
         return
     user = ch["username"]
-    beca = comedor_http.beca(user)
+    beca = _tools.consultar_beca(user)
     con_beca = bool(beca.get("tieneBeca") and beca.get("cubreHoy"))
     try:
         r = SagaOrchestrator().reservar_y_pagar({
