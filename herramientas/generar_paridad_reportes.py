@@ -7,6 +7,7 @@ respuestas. Los tests de JS y de Dart cargan ese archivo, repiten las consultas 
 
 Uso (desde ia-ml-service, con internet para bajar los datos de la muestra):
     python herramientas/generar_paridad_reportes.py
+    python herramientas/generar_paridad_reportes.py --reusar    # misma muestra de datos del archivo actual, sin red
 Escribe ../comedor-clientes/pruebas-comunes/reportes-paridad.json
 """
 import json
@@ -68,6 +69,18 @@ CASOS = [
     ("ahora por mes", True),
     ("solo en efectivo", True),
     ("quítale los filtros", True),
+    # como lo escribe o lo dicta la gente: sin tildes, con faltas, coloquial
+    ("cuanta comida se tira", False),
+    ("plato con mas sobras", False),
+    ("eh mostrame los pagos de los ultimos 15 dias porfa", False),
+    ("plata que entro en octubre", False),
+    ("pagos de ocutbre ordenados del mayor al menor", False),
+    ("reservas canseladas", False),
+    ("que insumos faltan", False),
+    ("pagos de este año", False),                        # conversación dictada
+    ("ahora agrupalo por mes", True),
+    ("solo los de qr", True),
+    ("pasamelo a excel", True),
 ]
 
 # Marcas de asistencia de ejemplo (en producción puede no haber ninguna el día que se genera)
@@ -94,11 +107,15 @@ def muestra(filas: list) -> list:
 
 
 def main() -> None:
-    print("Bajando una muestra de los datos reales…")
-    snap = httpx.get(f"{SERVIDOR}/reportes/snapshot?rol=administrador", verify=False, timeout=180).json()
-    datasets = {}
-    for did, t in snap["datasets"].items():
-        datasets[did] = {"columnas": t["columnas"], "filas": muestra(t["filas"])}
+    if "--reusar" in sys.argv:                           # misma muestra de datos que el archivo actual (sin red)
+        print("Reusando la muestra de datos del archivo actual…")
+        datasets = json.load(open(SALIDA, encoding="utf-8"))["datasets"]
+    else:
+        print("Bajando una muestra de los datos reales…")
+        snap = httpx.get(f"{SERVIDOR}/reportes/snapshot?rol=administrador", verify=False, timeout=180).json()
+        datasets = {}
+        for did, t in snap["datasets"].items():
+            datasets[did] = {"columnas": t["columnas"], "filas": muestra(t["filas"])}
     if not datasets.get("asistencia", {}).get("filas"):
         datasets["asistencia"] = {"columnas": [c["nombre"] for c in catalogo.DATASETS["asistencia"]["columnas"]], "filas": ASISTENCIA}
 

@@ -80,13 +80,22 @@ def frases(c: dict) -> list[str]:
 # ----------------------------- corrección de tipeos -----------------------------
 
 def _distancia(a: str, b: str) -> int:
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (0 if ca == cb else 1)))
-        prev = cur
-    return prev[-1]
+    """Errores entre dos palabras; cambiar de lugar dos letras seguidas ("ocutbre") cuenta como UN error."""
+    d = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        d[i][0] = i
+    for j in range(len(b) + 1):
+        d[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            costo = 0 if a[i - 1] == b[j - 1] else 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + costo)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[len(a)][len(b)]
+
+
+PARECIDO_MINIMO = 0.85        # una palabra de 7 letras con un error (0.857) ya se corrige
 
 
 def _vocabulario() -> list[str]:
@@ -94,7 +103,11 @@ def _vocabulario() -> list[str]:
         "ascendente", "descendente", "promedio", "mayores", "menores", "ordenado", "ordenados", "agrupado",
         "desperdicio", "cuantos", "cuantas", "cantidad", "reporte", "mostrar", "ultimos", "ultimas", "trimestre",
         "semestre", "bolivianos", "estudiantes", "reservas", "raciones", "pagos", "becas", "menus", "insumos",
-        "total", "maximo", "minimo", "ayer"}
+        "total", "maximo", "minimo", "ayer",
+        # valores que la gente escribe (estados, métodos, turnos, tipos): sin ellos "canseladas" no se corrige
+        "cancelada", "canceladas", "confirmada", "confirmadas", "consumida", "consumidas", "pendiente", "pendientes",
+        "cobrado", "cobrados", "devuelto", "devueltos", "fallido", "fallidos", "efectivo", "tarjeta",
+        "almuerzo", "desayuno", "completa", "parcial"}
     for ds in catalogo.DATASETS.values():
         for s in ds["sinonimos"]:
             v |= set(norm(s).split(" "))
@@ -113,7 +126,7 @@ def corregir_tipeos(t: str) -> str:
         if len(w) < 6 or not re.fullmatch(r"[a-z]+", w) or w in VOCAB:
             out.append(w)
             continue
-        mejor, mejor_r = None, 0.86
+        mejor, mejor_r = None, PARECIDO_MINIMO
         for v in VOCAB:
             if abs(len(v) - len(w)) > 2:
                 continue
@@ -374,10 +387,10 @@ def valores(t: str, ds_id: str, rows: list[dict] | None, modo: str = "resto") ->
                     marcar(toks)
                 continue
             variantes = {nv}
-            if "/" in nv:
-                variantes |= {x.strip() for x in nv.split("/") if len(x.strip()) >= 3}
+            if "/" in nv:                                        # "QR / tarjeta": también vale "qr" o "tarjeta" sola
+                variantes |= {x.strip() for x in nv.split("/") if len(x.strip()) >= 2}
             for va in variantes:
-                if len(va) < 3 or (va in SIN_PALABRA and SIN_PALABRA[va] not in t):
+                if len(va) < (3 if va == nv else 2) or (va in SIN_PALABRA and SIN_PALABRA[va] not in t):
                     continue
                 m = _re_valor(va).search(t)
                 if m:

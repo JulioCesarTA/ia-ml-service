@@ -160,17 +160,19 @@ DATASETS: dict[str, dict] = {
                      "marcas fuera del comedor", "entradas por día de la semana"],
     },
     "desperdicio": {
-        "raices": ['desperdic', 'sobrant', 'merma'],
+        # 'sobra'/'sobro' y no 'sobr': esa también pegaría con la preposición «sobre»
+        "raices": ['desperdic', 'sobrant', 'sobra', 'sobro', 'merma'],
         "etiqueta": "Desperdicio (fotos de bandejas)",
         "descripcion": "Bandejas analizadas con TensorFlow: porcentaje que sobró y que se comió.",
-        "sinonimos": ["desperdicio", "desperdicios", "sobrante", "sobrantes", "merma", "bandeja", "bandejas", "fotos", "restante", "desperdiciado"],
-        "palabras_clave": "desperdicio sobrante merma bandejas fotos porcentaje que sobró lo que se comió",
+        "sinonimos": ["desperdicio", "desperdicios", "sobrante", "sobrantes", "sobras", "merma", "bandeja", "bandejas", "fotos", "restante",
+                      "desperdiciado", "comida que se tira", "se tira", "se bota", "botan", "restos", "lo que dejan", "dejan en el plato"],
+        "palabras_clave": "desperdicio sobrante sobras merma bandejas fotos porcentaje que sobró lo que se comió comida que se tira se bota restos",
         "fecha": "fecha",
         "columnas": [
             col("fecha", "Fecha", "fecha", ["dia"]),
             col("turno", "Turno", "categoria", ["horario", "comida"]),
             col("plato", "Plato", "categoria", ["platillo", "menu"]),
-            col("restante", "Sobrante (%)", "numero", ["desperdicio", "sobro", "merma", "porcentaje sobrante", "restante"], "porcentaje"),
+            col("restante", "Sobrante (%)", "numero", ["desperdicio", "sobro", "sobras", "merma", "porcentaje sobrante", "restante", "se tira", "dejan"], "porcentaje"),
             col("comido", "Comido (%)", "numero", ["consumido", "aprovechado", "porcentaje comido"], "porcentaje"),
             col("confianza", "Confianza (%)", "numero", ["certeza", "seguridad"], "porcentaje"),
         ],
