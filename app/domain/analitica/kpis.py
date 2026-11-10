@@ -109,18 +109,24 @@ def _cancelacion(cargar: Cargador) -> dict:
                 _estado(pct, 10, 25, mayor_es_mejor=False), meta, {"estados": estados})
 
 
-def _becas(cargar: Cargador) -> dict:
-    nombre, meta = "Uso de becas", "Becarios aprovechando su cupo mensual (≥ 50%)"
+def _becas(cargar: Cargador, hoy: pd.Timestamp) -> dict:
+    """Raciones usadas este mes frente a las que un becario ya podría haber usado a esta altura del mes
+    (el cupo es mensual: el día 10 nadie puede haber usado más de un tercio)."""
+    nombre, meta = "Uso de becas", "Becarios usando ≥ 50% del cupo que llevan disponible en el mes"
     b = cargar("becas")
     b = b[b["vigente"] == "Sí"]
     if b.empty or b["cupoMensual"].sum() == 0:
         return _sin_datos("becas", nombre, meta, "No hay becas vigentes")
-    pct = b["usadas"].sum() / b["cupoMensual"].sum() * 100
+    fraccion_mes = min(1.0, hoy.day / hoy.days_in_month)
+    esperado = b["cupoMensual"] * fraccion_mes
+    pct = b["usadas"].sum() / max(1.0, float(esperado.sum())) * 100
     padron = len(cargar("estudiantes"))
-    becarios = [{"nombre": str(f["estudiante"])[:18], "usadas": int(f["usadas"]), "libres": int(max(0, f["cupoMensual"] - f["usadas"]))}
+    becarios = [{"nombre": str(f["estudiante"])[:18], "usadas": int(f["usadas"]),
+                 "libres": int(max(0, round(f["cupoMensual"] * fraccion_mes) - f["usadas"]))}
                 for f in b.sort_values("usadas", ascending=False).head(8).to_dict("records")]
     return _kpi("becas", nombre, round(pct, 1), "%",
-                f"{len(b)} becarios vigentes de {padron} estudiantes · {int(b['usadas'].sum())} de {int(b['cupoMensual'].sum())} raciones usadas",
+                f"{len(b)} becarios vigentes de {padron} estudiantes · {int(b['usadas'].sum())} raciones usadas de {int(round(esperado.sum()))} "
+                f"disponibles al día {hoy.day} (cupo mensual {int(b['cupoMensual'].sum())})",
                 _estado(pct, 50, 20), meta, {"becarios": becarios})
 
 
@@ -175,7 +181,7 @@ def calcular(cargar: Cargador) -> dict:
     """Los 7 KPI con los conjuntos de datos que entrega `cargar(dataset)`."""
     hoy = pd.Timestamp(date.today())
     calculadores = [lambda: _ocupacion(cargar, hoy), lambda: _ingresos(cargar, hoy), lambda: _volumen(cargar, hoy),
-                    lambda: _cancelacion(cargar), lambda: _becas(cargar), lambda: _desperdicio(cargar), lambda: _insumos(cargar)]
+                    lambda: _cancelacion(cargar), lambda: _becas(cargar, hoy), lambda: _desperdicio(cargar), lambda: _insumos(cargar)]
     kpis = []
     for f in calculadores:
         try:
