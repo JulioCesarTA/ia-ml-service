@@ -182,6 +182,10 @@ DATASETS: dict[str, dict] = {
     },
 }
 
+# Sin pedir columnas se muestran TODAS las del conjunto (se quitan después con «quita la columna X»)
+for _ds in DATASETS.values():
+    _ds["defecto"] = [c["nombre"] for c in _ds["columnas"]]
+
 # Quién puede consultar qué (con la autenticación activa el rol sale del token)
 PERMISOS = {
     "administrador": set(DATASETS),

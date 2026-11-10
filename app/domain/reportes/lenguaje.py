@@ -8,6 +8,7 @@ Entiende: qué datos (reservas, pagos, estudiantes, becas, menús, insumos, desp
 
 No escribe SQL ni consultas libres: solo rellena esta estructura, que el motor valida contra el catálogo (SPEC §10).
 """
+import json
 import math
 import re
 from datetime import date, timedelta
@@ -38,6 +39,12 @@ COL_NUM = {"pagos": "monto", "estudiantes": "reservas", "becas": "uso", "menus":
 FORMATOS = [("pdf", r"\bpdf\b"), ("excel", r"\b(excel|xlsx|xls|hoja de calculo|planilla|spreadsheet)\b"),
             ("pantalla", r"\b(en pantalla|por pantalla|en la pantalla|aqui)\b")]
 SIN_PALABRA = {"media": "beca"}          # valores ambiguos: solo cuentan junto a esta palabra
+# «los que vinieron / comieron / asistieron al comedor»: raciones servidas (reservas consumidas), no la asistencia del personal
+VINIERON = re.compile(r"\b(vinieron|vino al comedor|asistieron|asistio al comedor|comieron|almorzaron|cenaron|desayunaron|"
+                      r"entraron al comedor|fueron al comedor|pasaron por el comedor|se sirvieron|retiraron (?:su|sus) racion(?:es)?)\b")
+DEL_PERSONAL = re.compile(r"\b(personal|empleados?|trabajadores?|cocineros?|marcas?|marcaron|marcacion\w*)\b")
+DIA_REL = "hoy|ayer|anteayer|lunes|martes|miercoles|jueves|viernes|sabado|domingo"
+NUM_PALABRA = {"un": 1, "una": 1, "uno": 1}
 
 
 # ----------------------------- texto -----------------------------
@@ -175,6 +182,18 @@ def _fecha_texto(d: str, m: str, y: str | None, hoy: date) -> date:
     return date(anio, mes, min(int(d), _dias_en_mes(anio, mes)))
 
 
+def _dia_relativo(w: str, hoy: date) -> date:
+    """hoy, ayer, anteayer o el último lunes/martes/... que ya pasó (o hoy)."""
+    if w in ("hoy", "la fecha", "ahora"):
+        return hoy
+    if w == "ayer":
+        return hoy - timedelta(days=1)
+    if w == "anteayer":
+        return hoy - timedelta(days=2)
+    d = hoy - timedelta(days=hoy.weekday()) + timedelta(days=DIAS[w])
+    return d - timedelta(days=7) if d > hoy else d
+
+
 def _ultimos(n: int, unidad: str, hoy: date) -> dict:
     por = 1 if unidad.startswith("dia") else 7 if unidad.startswith("semana") else 30 if unidad.startswith("mes") else 365
     dias = n * por
@@ -188,6 +207,34 @@ def _proximos(n: int, unidad: str, hoy: date) -> dict:
 
 
 def parse_fechas(t: str, hoy: date) -> tuple[dict | None, str]:
+    # «semana del 2 de noviembre»: esa semana, de lunes a domingo
+    m = re.search(rf"\bsemana del? (\d{{1,2}}) (?:de )?({MES_ALT})(?: (?:de|del) (\d{{4}}))?\b", t)
+    if m:
+        d = _fecha_texto(m[1], m[2], m[3], hoy)
+        a = d - timedelta(days=d.weekday())
+        b = a + timedelta(days=6)
+        return _rango(a, b, f"la semana del {dmy(a)} al {dmy(b)}"), blank(t, *m.span())
+    # «de anteayer a hoy», «desde el lunes hasta hoy», «entre ayer y hoy»
+    m = re.search(rf"\b(?:desde|entre|de|del)(?: el)? ({DIA_REL}) (?:a|al|hasta|y)(?: el)? ({DIA_REL}|la fecha|ahora)\b", t)
+    if m:
+        a, b = _dia_relativo(m[1], hoy), _dia_relativo(m[2], hoy)
+        if a > b:
+            a, b = b, a
+        return _rango(a, b, f"del {dmy(a)} al {dmy(b)}"), blank(t, *m.span())
+    # «desde ayer», «desde el lunes»: hasta hoy
+    m = re.search(rf"\b(?:desde|a partir de)(?: el)? ({DIA_REL})\b", t)
+    if m:
+        a = _dia_relativo(m[1], hoy)
+        return _rango(a, hoy, f"desde el {dmy(a)}"), blank(t, *m.span())
+    # «hace 3 días» (ese día) · «desde hace 2 semanas», «hace un mes» (desde entonces hasta hoy)
+    m = re.search(r"\b(desde )?hace (\d+|un|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince|veinte|treinta) "
+                  r"(dias?|semanas?|mes|meses)\b", t)
+    if m:
+        n = int(m[2]) if m[2].isdigit() else NUM_PALABRA.get(m[2]) or NUMEROS[m[2]]
+        dias = n * (1 if m[3].startswith("dia") else 7 if m[3].startswith("semana") else 30)
+        a = hoy - timedelta(days=dias)
+        r = _rango(a, hoy, f"desde el {dmy(a)}") if m[1] or not m[3].startswith("dia") else _rango(a, a, f"el {dmy(a)}")
+        return r, blank(t, *m.span())
     m = re.search(rf"\b(?:del?|entre)(?: el)? (\d{{1,2}}) (?:al?|y)(?: el)? (\d{{1,2}}) (?:de )?({MES_ALT})(?: (?:de|del) (\d{{4}}))?\b", t)
     if m:
         a, b = _fecha_texto(m[1], m[3], m[4], hoy), _fecha_texto(m[2], m[3], m[4], hoy)
@@ -218,6 +265,10 @@ def parse_fechas(t: str, hoy: date) -> tuple[dict | None, str]:
         ds = [c[2] for c in cand]
         if len(ds) >= 2:
             return _rango(min(ds), max(ds), f"del {dmy(min(ds))} al {dmy(max(ds))}"), restos
+        # «del 1 de noviembre a la fecha», «desde el 5/10 hasta hoy»
+        tras = re.match(r"\s*(?:a|al|hasta)(?: el dia de)? (?:la fecha|hoy|ahora)\b", t[cand[0][1]:])
+        if tras:
+            return _rango(ds[0], hoy, f"desde el {dmy(ds[0])}"), blank(restos, cand[0][1], cand[0][1] + tras.end())
         antes = t[max(0, cand[0][0] - 22):cand[0][0]]
         if re.search(r"(desde|a partir de|despues de)(?: el)? $", antes):
             return _rango(ds[0], hoy, f"desde el {dmy(ds[0])}"), restos
@@ -425,6 +476,8 @@ def _frases_especiales(t: str, ds_id: str) -> dict:
             filtros.append({"col": "beca", "op": "!=", "valor": "Sin beca"})
         if re.search(r"\b(sin reservas|no reservaron|nunca reservaron)\b", t):
             filtros.append({"col": "reservas", "op": "=", "valor": 0})
+    if ds_id == "reservas" and VINIERON.search(t):
+        filtros.append({"col": "estado", "op": "=", "valor": "Consumida"})
     if ds_id == "becas":
         if re.search(r"\b(inactiv\w+|sin usar|sin uso|no (?:la )?(?:usan|usaron|usa)|desaprovechad\w+)\b", t):
             filtros.append({"col": "usadas", "op": "=", "valor": 0})
@@ -438,6 +491,8 @@ def _frases_especiales(t: str, ds_id: str) -> dict:
 # ----------------------------- detección del conjunto de datos -----------------------------
 
 def detectar_dataset(t: str) -> dict:
+    if VINIERON.search(t) and not DEL_PERSONAL.search(t):
+        return {"id": "reservas", "score": 5, "ranking": [("reservas", 5)]}
     compartidas: dict[str, int] = {}
     for ds in catalogo.DATASETS.values():
         for c in ds["columnas"]:
@@ -749,6 +804,49 @@ def _resolver_medida_orden(spec: dict) -> dict:
     return spec
 
 
+# «quita la columna estado», «saca el método», «sin la columna estudiante», «agrega la matrícula»
+QUITAR_COL = re.compile(r"^(?:y |ahora |pero |tambien )?(?:quita(?:le|r)?|saca(?:le|r)?|elimina(?:le|r)?|borra(?:le|r)?|oculta(?:le|r)?|"
+                        r"remueve|no (?:quiero ver|quiero|muestres|pongas)|sin)\b(.*)$")
+AGREGAR_COL = re.compile(r"^(?:y |ahora |pero |tambien )?(?:agrega(?:le|r)?|anade(?:le)?|pon(?:le|er)?|incluye|muestra(?:me)? tambien|"
+                         r"quiero ver tambien)\b(.*)$")
+
+
+def _editar_columnas(t: str, previa: dict) -> dict | None:
+    """Quita o agrega columnas al reporte anterior. None si el pedido no es eso (p. ej. «sin beca» es un filtro)."""
+    if previa.get("agrupar") or previa.get("medidas"):        # un resumen agrupado tiene otras columnas
+        return None
+    if re.search(r"\bfiltros?\b", t):
+        return None
+    quitar = QUITAR_COL.match(t)
+    agregar = None if quitar else AGREGAR_COL.match(t)
+    m = quitar or agregar
+    if not m:
+        return None
+    if re.match(r"^(?:(?:y|ahora|pero|tambien) )?sin\b", t) and not re.search(r"\bcolumnas?\b", t):
+        return None
+    nombres: list[str] = []
+    for _, _, n in menciones(m[1], previa["dataset"]):
+        if n not in nombres:
+            nombres.append(n)
+    if not nombres:
+        return None
+    ds = catalogo.DATASETS[previa["dataset"]]
+    cols = list(previa.get("columnas") or ds["defecto"])
+    if quitar:
+        cols = [c for c in cols if c not in nombres]
+    else:
+        cols += [n for n in nombres if n not in cols]
+    if not cols:
+        raise NoEntendido("El reporte tiene que quedar con al menos una columna.")
+    spec = json.loads(json.dumps(previa))
+    spec["columnas"] = [c["nombre"] for c in ds["columnas"] if c["nombre"] in cols]      # en el orden del catálogo
+    for nombre, patron in FORMATOS:
+        if re.search(patron, t):
+            spec["salida"] = nombre
+            break
+    return spec
+
+
 def _es_refinamiento(t: str) -> bool:
     return bool(re.match(r"^(ahora|ademas|tambien|y |pero|mejor|solo|solamente|quitale|quita|agregale|agrega|ponle|pon |"
                          r"cambialo|cambia|ordenalo|ordena|filtralo|filtra|agrupalo|agrupa|muestrame tambien|que sea|en vez|en lugar)", t))
@@ -781,6 +879,9 @@ def interpretar(texto: str, previa: dict | None = None, hoy: date | None = None,
         raise NoEntendido("Escribe o di qué reporte quieres.")
     if re.search(r"\b(nuevo reporte|otro reporte|desde cero|empezar de nuevo|reiniciar)\b", t0):
         previa = None
+    editado = _editar_columnas(t0, previa) if previa and previa.get("dataset") in catalogo.DATASETS else None
+    if editado:
+        return {"spec": editado, "entendi": entendido(editado), "notas": [], "confianza": 1, "continuacion": True, "alternativas": []}
     det = detectar_dataset(t0)
     ds_id, refina = det["id"], False
     if previa and previa.get("dataset") in catalogo.DATASETS and (

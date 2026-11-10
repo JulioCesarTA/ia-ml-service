@@ -81,6 +81,24 @@ CASOS = [
     ("ahora agrupalo por mes", True),
     ("solo los de qr", True),
     ("pasamelo a excel", True),
+    # los que vinieron al comedor = reservas servidas
+    ("quiero ver los estudiantes que vinieron hoy al comedor", False),
+    ("quienes comieron esta semana", False),
+    # quitar y agregar columnas en la conversación
+    ("pagos de este mes", False),
+    ("quita la columna estado", True),
+    ("saca el metodo", True),
+    ("agrega la columna estado y pasalo a pdf", True),
+    ("reservas de noviembre", False),
+    ("sin la columna estudiante", True),
+    # rangos de fecha
+    ("reservas de la semana del 2 de noviembre", False),
+    ("reservas de anteayer a hoy", False),
+    ("reservas desde el lunes", False),
+    ("reservas de hace 3 dias", False),
+    ("pagos desde hace 2 semanas", False),
+    ("reservas del 1 de noviembre a la fecha", False),
+    ("pagos del 5 de octubre hasta hoy", False),
 ]
 
 # Marcas de asistencia de ejemplo (en producción puede no haber ninguna el día que se genera)
