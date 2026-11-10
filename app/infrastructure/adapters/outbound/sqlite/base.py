@@ -70,7 +70,8 @@ class BaseLocal:
                 c.execute("ALTER TABLE outbox ADD COLUMN chat_id TEXT")
             for tabla in ("ref_porcion", "bandejas"):      # fotos en S3 y registros hechos desde el celular
                 existentes = [r["name"] for r in c.execute(f"PRAGMA table_info({tabla})")]
-                for col, tipo in (("foto_key", "TEXT"), ("origen", "TEXT DEFAULT 'servidor'"), ("cliente_id", "TEXT")):
+                # sectores: JSON con el % que quedó de cada sector (arroz, ensalada, ...); columna nueva, las filas viejas quedan en NULL
+                for col, tipo in (("foto_key", "TEXT"), ("origen", "TEXT DEFAULT 'servidor'"), ("cliente_id", "TEXT"), ("sectores", "TEXT")):
                     if col not in existentes:
                         c.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {tipo}")
                 # un mismo registro enviado dos veces (reintento sin conexión) no se duplica ni se pisa

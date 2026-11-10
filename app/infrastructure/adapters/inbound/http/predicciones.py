@@ -2,6 +2,7 @@
   - Regresión (supervisado): raciones esperadas por plato, turno y día.
   - Clustering (no supervisado): agrupación de platos (mantener / ajustar / retirar).
   - Deep Learning (TensorFlow): porcentaje que se comió cada persona respecto a la porción de referencia."""
+import json
 import time
 from datetime import date
 
@@ -82,9 +83,12 @@ def crear_router(regresion: ServicioRegresion, datos: DatosMenus, fuentes: Fuent
                 "platos": [{"platoId": x["platoId"], "turno": x["turno"], "fecha": x["fecha"]} for x in filas if x["fecha"] == ultimo]}
 
     @router.post("/vision/referencia")
-    async def vision_referencia(file: UploadFile = File(...), plato_id: str = Form(...), fecha: str = Form(...), turno: str = Form(...)):
+    async def vision_referencia(file: UploadFile = File(...), plato_id: str = Form(...), fecha: str = Form(...), turno: str = Form(...),
+                                nombres: str | None = Form(None)):
+        """`nombres` (opcional, JSON): cómo se llama cada sector en este plato, p. ej. {"proteina": "pollo", "postre": "naranja"}."""
         try:
-            return vision.registrar_referencia(await file.read(), plato_id, fecha, turno)
+            n = json.loads(nombres) if nombres else None
+            return vision.registrar_referencia(await file.read(), plato_id, fecha, turno, n if isinstance(n, dict) else None)
         except Exception as e:
             raise HTTPException(400, f"No se pudo leer la imagen: {e}")
 

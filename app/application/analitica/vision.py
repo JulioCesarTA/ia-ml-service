@@ -14,6 +14,7 @@ import numpy as np
 from app.application.ports.externos import AlmacenObjetos, ArchivosVision, ProcesadorImagenes
 from app.application.ports.repositorios import RepositorioVision
 from app.domain import fotos
+from app.domain.analitica import sectores as sec
 from app.domain.analitica import vision as dom
 from app.domain.analitica.vision import CAPA, DIM, LADO, PESO_COLOR, REJ
 
@@ -45,17 +46,30 @@ class ServicioVision:
 
     # ----------------------------- referencia -----------------------------
 
-    def registrar_referencia(self, data: bytes, plato_id: str, fecha: str, turno: str) -> dict:
+    def _sectores_de(self, d, sat, tex):
+        """Clase (arroz, ensalada, ...) de cada zona según la red de sectores, o None si no hay modelo."""
+        modelo = self._cnn.modelo_sectores()
+        return None if modelo is None else sec.clasificar_zonas(sec.entrada(d, sat, tex), modelo)
+
+    def registrar_referencia(self, data: bytes, plato_id: str, fecha: str, turno: str, nombres: dict | None = None) -> dict:
+        """`nombres`: cómo se llama cada sector en este plato, p. ej. {"proteina": "pollo", "postre": "naranja"}."""
         img = self._cnn.cargar(data)
-        d, aspecto = self._cnn.zonas(img)
+        d, aspecto, sat, tex = self._cnn.zonas_completas(img)
         ref = dom.analizar_referencia(d, aspecto)
+        clases = self._sectores_de(d, sat, tex)
+        sectores = None
+        if clases is not None:
+            sectores = {"zonas": sec.sectores_referencia(clases),
+                        "nombres": sec.nombres_validos(nombres, self._cnn.modelo_sectores().get("nombres"))}
         rid = uuid.uuid4().hex[:10]
         self._archivos.guardar_prototipos(rid, ref["p_comida"], ref["p_fondo"])
         foto_key = self._guardar_foto("ref", rid, img, fecha)
-        self._repo.guardar_referencia(rid, plato_id, fecha, turno, ref["f_ref"], ref["advertencia"], foto_key=foto_key)
-        comida = ref["comida"]
+        self._repo.guardar_referencia(rid, plato_id, fecha, turno, ref["f_ref"], ref["advertencia"], foto_key=foto_key, sectores=sectores)
+        comida = ref["comida"] if clases is None else clases > 0
         return {"id": rid, "platoId": plato_id, "fecha": fecha, "turno": turno, "zonasComida": int(comida.sum()),
                 "fraccionComida": round(ref["f_ref"], 3), "advertencia": ref["advertencia"], "mascara": dom.mascara_lista(comida),
+                "sectores": None if sectores is None else [{"clase": c, "nombre": sectores["nombres"][c], "zonas": n}
+                                                           for c, n in sectores["zonas"].items()],
                 "modelo": self.nombre_modelo()}
 
     def referencias(self, limite: int = 30) -> list[dict]:
@@ -69,14 +83,21 @@ class ServicioVision:
             raise ValueError("La referencia no existe")
         p = self._archivos.cargar_prototipos(ref_id)
         img = self._cnn.cargar(data)
-        d, _ = self._cnn.zonas(img)
+        d, _, sat, tex = self._cnn.zonas_completas(img)
         es_comida, restante, confianza = dom.analizar_bandeja(d, p["comida"], p["fondo"], r["f_ref"])
+        sectores = None
+        ref_sec = r.get("sectores")
+        if ref_sec and ref_sec.get("zonas"):
+            clases = self._sectores_de(d, sat, tex)
+            if clases is not None:                      # con la red de sectores: % por sector y el promedio de la bandeja
+                sectores, restante = sec.comparar(ref_sec["zonas"], clases, ref_sec.get("nombres") or sec.NOMBRES_POR_DEFECTO)
+                es_comida = clases > 0
         bid = uuid.uuid4().hex[:10]
         foto_key = self._guardar_foto("bandeja", bid, img, r["fecha"])
         self._repo.guardar_bandeja(bid, ref_id, r["plato_id"], r["fecha"], r["turno"],
-                                   round(restante, 1), round(100 - restante, 1), round(confianza, 2), foto_key=foto_key)
+                                   round(restante, 1), round(100 - restante, 1), round(confianza, 2), foto_key=foto_key, sectores=sectores)
         return {"id": bid, "refId": ref_id, "platoId": r["plato_id"], "restantePct": round(restante, 1), "comidoPct": round(100 - restante, 1),
-                "confianza": round(confianza, 2), "mascara": dom.mascara_lista(es_comida)}
+                "confianza": round(confianza, 2), "sectores": sectores, "mascara": dom.mascara_lista(es_comida)}
 
     def resumen(self) -> dict:
         r = self._repo.resumen_bandejas()
@@ -99,7 +120,8 @@ class ServicioVision:
                 continue
             p = self._archivos.cargar_prototipos(r["id"])
             refs.append({"id": r["id"], "platoId": r["plato_id"], "fecha": r["fecha"], "turno": r["turno"], "fRef": round(r["f_ref"], 4),
-                         "comida": np.round(p["comida"], 4).tolist(), "fondo": np.round(p["fondo"], 4).tolist()})
+                         "comida": np.round(p["comida"], 4).tolist(), "fondo": np.round(p["fondo"], 4).tolist(),
+                         "sectores": r.get("sectores")})
         return {"dim": DIM, "rejilla": REJ, "lado": LADO, "capa": CAPA, "pesoColor": PESO_COLOR, "referencias": refs}
 
     def url_subida(self, tipo: str, cliente_id: str, fecha_iso: str | None = None) -> dict:
@@ -122,10 +144,12 @@ class ServicioVision:
             return {"id": previo["id"], "repetido": True}
         plato, f_ref = dom.validar_referencia_movil(p)
         comida, fondo = dom.prototipos_validos(p.get("comida"), "comida"), dom.prototipos_validos(p.get("fondo"), "fondo")
+        sectores = sec.sectores_ref_validos(p.get("sectores"))
         rid = uuid.uuid4().hex[:10]
         self._archivos.guardar_prototipos(rid, comida, fondo)
         self._repo.guardar_referencia(rid, plato, p["fecha"], p["turno"], f_ref, p.get("advertencia"),
-                                      foto_key=self._clave_confirmada(p.get("foto_key"), "ref"), origen="movil", cliente_id=cid)
+                                      foto_key=self._clave_confirmada(p.get("foto_key"), "ref"), origen="movil", cliente_id=cid,
+                                      sectores=sectores)
         return {"id": rid, "repetido": False}
 
     def registrar_bandeja_movil(self, p: dict) -> dict:
@@ -137,9 +161,11 @@ class ServicioVision:
         if r is None:
             raise LookupError("La referencia no existe en el servidor (¿aún no se sincronizó?)")
         restante, confianza = dom.validar_bandeja_movil(p)
+        sectores = sec.sectores_validos(p.get("sectores"))
         bid = uuid.uuid4().hex[:10]
         self._repo.guardar_bandeja(bid, r["id"], r["plato_id"], r["fecha"], r["turno"], round(restante, 1), round(100 - restante, 1),
-                                   round(confianza, 2), foto_key=self._clave_confirmada(p.get("foto_key"), "bandeja"), origen="movil", cliente_id=cid)
+                                   round(confianza, 2), foto_key=self._clave_confirmada(p.get("foto_key"), "bandeja"), origen="movil",
+                                   cliente_id=cid, sectores=sectores)
         return {"id": bid, "repetido": False}
 
     def url_foto(self, carpeta: str, fid: str) -> str | None:

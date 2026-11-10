@@ -27,6 +27,7 @@ class ReferenciaMovilIn(BaseModel):
     fondo: list[list[float]]
     foto_key: str | None = None
     advertencia: str | None = None
+    sectores: dict | None = None          # {"zonas": {sector: n}, "nombres": {sector: nombre}}
 
 
 class BandejaMovilIn(BaseModel):
@@ -35,3 +36,4 @@ class BandejaMovilIn(BaseModel):
     restante: float
     confianza: float
     foto_key: str | None = None
+    sectores: list[dict] | None = None    # [{clase, nombre, restante}]

@@ -175,10 +175,13 @@ class RepositorioVisionSqlite(_Repo):
     """Fotos de referencia de la porción completa y bandejas analizadas (tablas `ref_porcion` y `bandejas`)."""
 
     def guardar_referencia(self, rid: str, plato_id: str, fecha: str, turno: str, f_ref: float, advertencia: str | None,
-                           foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None:
+                           foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None,
+                           sectores: dict | None = None) -> None:
         with self._tx() as c:
-            c.execute("INSERT INTO ref_porcion(id,plato_id,fecha,turno,creado,f_ref,advertencia,foto_key,origen,cliente_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (rid, plato_id, fecha, turno, time.time(), f_ref, advertencia, foto_key, origen, cliente_id))
+            c.execute("INSERT INTO ref_porcion(id,plato_id,fecha,turno,creado,f_ref,advertencia,foto_key,origen,cliente_id,sectores) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      (rid, plato_id, fecha, turno, time.time(), f_ref, advertencia, foto_key, origen, cliente_id,
+                       json.dumps(sectores, ensure_ascii=False) if sectores else None))
 
     def por_cliente(self, tabla: str, cliente_id: str) -> dict | None:
         """Registro ya guardado con ese id de cliente (para que reenviar no duplique)."""
@@ -193,21 +196,30 @@ class RepositorioVisionSqlite(_Repo):
             r = c.execute(f"SELECT foto_key FROM {tabla} WHERE id=?", (fid,)).fetchone()
             return r["foto_key"] if r else None
 
+    @staticmethod
+    def _con_sectores(r) -> dict:
+        d = dict(r)
+        d["sectores"] = json.loads(d["sectores"]) if d.get("sectores") else None
+        return d
+
     def referencias(self, limite: int) -> list[dict]:
         with self._tx() as c:
-            return [dict(r) for r in c.execute("SELECT * FROM ref_porcion ORDER BY creado DESC LIMIT ?", (limite,))]
+            return [self._con_sectores(r) for r in c.execute("SELECT * FROM ref_porcion ORDER BY creado DESC LIMIT ?", (limite,))]
 
     def referencia(self, ref_id: str) -> dict | None:
         with self._tx() as c:
             r = c.execute("SELECT * FROM ref_porcion WHERE id=?", (ref_id,)).fetchone()
-            return dict(r) if r else None
+            return self._con_sectores(r) if r else None
 
     def guardar_bandeja(self, bid: str, ref_id: str, plato_id: str, fecha: str, turno: str,
                         restante: float, comido: float, confianza: float,
-                        foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None:
+                        foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None,
+                        sectores: list | None = None) -> None:
         with self._tx() as c:
-            c.execute("INSERT INTO bandejas(id,ref_id,plato_id,fecha,turno,creado,restante,comido,confianza,foto_key,origen,cliente_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (bid, ref_id, plato_id, fecha, turno, time.time(), restante, comido, confianza, foto_key, origen, cliente_id))
+            c.execute("INSERT INTO bandejas(id,ref_id,plato_id,fecha,turno,creado,restante,comido,confianza,foto_key,origen,cliente_id,sectores) "
+                      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (bid, ref_id, plato_id, fecha, turno, time.time(), restante, comido, confianza, foto_key, origen, cliente_id,
+                       json.dumps(sectores, ensure_ascii=False) if sectores else None))
 
     def resumen_bandejas(self) -> dict:
         with self._tx() as c:
@@ -217,8 +229,9 @@ class RepositorioVisionSqlite(_Repo):
                 "FROM bandejas GROUP BY plato_id, turno ORDER BY bandejas DESC")]
             por_dia = [dict(x) for x in c.execute(
                 "SELECT fecha, COUNT(*) bandejas, ROUND(AVG(restante),1) restante FROM bandejas GROUP BY fecha ORDER BY fecha")]
-            recientes = [dict(x) for x in c.execute(
-                "SELECT id, ref_id refId, plato_id platoId, fecha, turno, creado, restante, comido, confianza FROM bandejas ORDER BY creado DESC LIMIT 12")]
+            recientes = [self._con_sectores(x) for x in c.execute(
+                "SELECT id, ref_id refId, plato_id platoId, fecha, turno, creado, restante, comido, confianza, sectores "
+                "FROM bandejas ORDER BY creado DESC LIMIT 12")]
         return {"bandejas": total["n"], "restanteMedio": total["r"], "porPlato": por_plato, "porDia": por_dia, "recientes": recientes}
 
     def restante_medio_por_plato(self, minimo_bandejas: int) -> dict[str, float]:

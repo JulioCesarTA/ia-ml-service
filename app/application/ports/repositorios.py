@@ -62,7 +62,8 @@ class RepositorioVision(Protocol):
     """Referencias de porción y bandejas analizadas (tablas `ref_porcion` y `bandejas`)."""
 
     def guardar_referencia(self, rid: str, plato_id: str, fecha: str, turno: str, f_ref: float, advertencia: str | None,
-                           foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None: ...
+                           foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None,
+                           sectores: dict | None = None) -> None: ...
 
     def por_cliente(self, tabla: str, cliente_id: str) -> dict | None: ...
 
@@ -74,7 +75,8 @@ class RepositorioVision(Protocol):
 
     def guardar_bandeja(self, bid: str, ref_id: str, plato_id: str, fecha: str, turno: str,
                         restante: float, comido: float, confianza: float,
-                        foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None) -> None: ...
+                        foto_key: str | None = None, origen: str = "servidor", cliente_id: str | None = None,
+                        sectores: list | None = None) -> None: ...
 
     def resumen_bandejas(self) -> dict: ...
 

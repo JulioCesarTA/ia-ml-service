@@ -87,6 +87,14 @@ class ProcesadorImagenes(Protocol):
         """(descriptor de cada zona [REJ*REJ, DIM], 'aspecto de comida' de cada zona [REJ*REJ]) como arreglos numpy."""
         ...
 
+    def zonas_completas(self, imagen: Any) -> tuple[Any, Any, Any, Any]:
+        """Como `zonas`, más la saturación y la textura crudas de cada zona (entrada de la red de sectores)."""
+        ...
+
+    def modelo_sectores(self) -> dict | None:
+        """Pesos de la red que reconoce los sectores de la bandeja (None si no hay modelo entrenado)."""
+        ...
+
     def jpeg_reducido(self, imagen: Any) -> bytes:
         """La foto achicada a 900 px como máximo, en JPEG calidad 85."""
         ...

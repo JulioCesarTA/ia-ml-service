@@ -62,8 +62,7 @@ def analizar_referencia(d: np.ndarray, aspecto: np.ndarray) -> dict:
     if comida.sum() < 8 or (~comida).sum() < 8:
         raise ValueError(adv)
     p_comida, p_fondo = prototipos(d[comida], 4), prototipos(d[~comida], 4)
-    comida, _ = clasificar(d, p_comida, p_fondo)                 # misma regla que se usará con las bandejas
-    comida = alisar(comida)
+    comida, _ = mascara_comida(d, p_comida, p_fondo)             # misma regla que se usará con las bandejas
     return {"comida": comida, "p_comida": p_comida, "p_fondo": p_fondo, "f_ref": float(comida.mean()), "advertencia": adv}
 
 
@@ -81,16 +80,19 @@ def umbral_color(comida: np.ndarray, fondo: np.ndarray) -> float:
     return FACTOR_UMBRAL_COLOR * float(np.median(np.linalg.norm(comida[:, -3:] / PESO_COLOR - tray, axis=1)))
 
 
-def analizar_bandeja(d: np.ndarray, comida: np.ndarray, fondo: np.ndarray, f_ref: float) -> tuple[np.ndarray, float, float]:
-    """(máscara de comida, % restante, confianza).
-
-    Una zona cuenta como comida si su prototipo más parecido es de comida Y además su color se aleja del color de la
-    bandeja: así las manchas de salsa, migas y la grasa que quedan donde ya se comió no cuentan como comida.
-    Todo sale de los prototipos de la referencia, por eso el celular aplica la misma regla sin conexión.
-    """
+def mascara_comida(d: np.ndarray, comida: np.ndarray, fondo: np.ndarray) -> tuple[np.ndarray, float]:
+    """(máscara, confianza). Una zona cuenta como comida si su prototipo más parecido es de comida Y además su color se
+    aleja del color de la bandeja: así las manchas de salsa, migas y la grasa que quedan donde ya se comió no cuentan.
+    Se usa igual en la referencia y en las bandejas, así la misma foto llena comparada consigo misma da 100 %."""
     es_comida, confianza = clasificar(d, comida, fondo)
     lejos_de_bandeja = np.linalg.norm(d[:, -3:] / PESO_COLOR - color_bandeja(fondo), axis=1) > umbral_color(comida, fondo)
-    es_comida = alisar(es_comida & lejos_de_bandeja)
+    return alisar(es_comida & lejos_de_bandeja), confianza
+
+
+def analizar_bandeja(d: np.ndarray, comida: np.ndarray, fondo: np.ndarray, f_ref: float) -> tuple[np.ndarray, float, float]:
+    """(máscara de comida, % restante, confianza). Todo sale de los prototipos de la referencia, por eso el celular
+    aplica la misma regla sin conexión."""
+    es_comida, confianza = mascara_comida(d, comida, fondo)
     restante = float(min(100.0, 100.0 * es_comida.mean() / f_ref)) if f_ref > 0 else 0.0
     return es_comida, restante, confianza
 

@@ -4,6 +4,8 @@ Una red convolucional (MobileNetV2, TensorFlow) convierte la foto en un mapa de 
 144 características más su color. Los pesos van incluidos en la imagen del servicio: funciona sin internet.
 """
 import io
+import json
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -37,6 +39,18 @@ class ProcesadorTensorFlow:
 
     def zonas(self, imagen: Image.Image) -> tuple[np.ndarray, np.ndarray]:
         """(descriptor de cada zona [3136, 144+3], 'aspecto de comida' de cada zona [3136])."""
+        d, aspecto, _, _ = self.zonas_completas(imagen)
+        return d, aspecto
+
+    def modelo_sectores(self) -> dict | None:
+        """Pesos de la red que reconoce cada sector (arroz, ensalada, ...), o None si no está el archivo."""
+        if "sectores" not in _modelo:
+            ruta = Path(__file__).with_name("modelo_sectores.json")
+            _modelo["sectores"] = json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else None
+        return _modelo["sectores"]
+
+    def zonas_completas(self, imagen: Image.Image) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """(descriptor, aspecto, saturación cruda, textura cruda) de cada zona."""
         pq = imagen.resize((LADO, LADO))
         arr = np.asarray(pq, dtype=np.float32)
         f = _cnn().predict((arr / 127.5 - 1.0)[None], verbose=0)[0].reshape(REJ * REJ, -1)
@@ -48,7 +62,7 @@ class ProcesadorTensorFlow:
         sat = sat_px.reshape(REJ, paso, REJ, paso).mean(axis=(1, 3)).ravel()
         tex = gris.reshape(REJ, paso, REJ, paso).std(axis=(1, 3)).ravel()
         norm = lambda v: v / (v.max() + 1e-8)
-        return np.hstack([f, PESO_COLOR * rgb]), norm(sat) + norm(tex)
+        return np.hstack([f, PESO_COLOR * rgb]), norm(sat) + norm(tex), sat, tex
 
     def jpeg_reducido(self, imagen: Image.Image) -> bytes:
         chica = imagen.copy()
