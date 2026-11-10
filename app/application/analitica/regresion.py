@@ -10,6 +10,8 @@ from app.application.analitica.clima import ServicioClima
 from app.application.analitica.datos import DatosMenus
 from app.domain.analitica import regresion as dom
 
+MIN_HISTORIAL_PLATO = 10     # registros (días servidos) que necesita un plato para aparecer en el predictor
+
 
 class ServicioRegresion:
     def __init__(self, datos: DatosMenus, clima: ServicioClima, min_muestras: int = dom.MIN_MUESTRAS):
@@ -61,9 +63,13 @@ class ServicioRegresion:
                 p = self._predecir(m, x["fecha"], x["turno"], x["platoId"], x["cupo"])
                 plan.append({"fecha": x["fecha"], "turno": x["turno"], "platoId": x["platoId"], "cupo": x["cupo"],
                              "apartadas": x["apartadas"], "prediccion": round(p, 1), "sugerida": min(int(x["cupo"]), max(0, math.ceil(p * 1.1)))})
+        # Platos para el predictor: solo los que tienen historial suficiente (los de menús de prueba quedan fuera)
+        veces: dict[str, int] = {}
+        for x in self._datos.filas():
+            veces[x["platoId"]] = veces.get(x["platoId"], 0) + 1
         return {**pub, "metricas": m["metricas"], "importancias": m["importancias"], "serie": m["serie"],
                 "conDemanda": m["conDemanda"], "plan": plan,
-                "platos": sorted({x["platoId"] for x in self._datos.filas()})}
+                "platos": sorted(p for p, n in veces.items() if n >= MIN_HISTORIAL_PLATO) or sorted(veces)}
 
     def predecir(self, fecha: str, plato_id: str, turno: str = "ALMUERZO", cupo: float | None = None) -> dict:
         m = self._obtener()
