@@ -67,10 +67,30 @@ def analizar_referencia(d: np.ndarray, aspecto: np.ndarray) -> dict:
     return {"comida": comida, "p_comida": p_comida, "p_fondo": p_fondo, "f_ref": float(comida.mean()), "advertencia": adv}
 
 
+FACTOR_UMBRAL_COLOR = 0.5      # una zona es comida si se aleja del color de la bandeja al menos la mitad de lo que se aleja la comida típica
+
+
+def color_bandeja(fondo: np.ndarray) -> np.ndarray:
+    """Color (RGB 0-1) de la bandeja/plato: el promedio del color de los prototipos de fondo de la referencia."""
+    return fondo[:, -3:].mean(axis=0) / PESO_COLOR
+
+
+def umbral_color(comida: np.ndarray, fondo: np.ndarray) -> float:
+    """Distancia de color mínima para considerar que una zona no es bandeja: la mitad de lo que se aleja la comida típica."""
+    tray = color_bandeja(fondo)
+    return FACTOR_UMBRAL_COLOR * float(np.median(np.linalg.norm(comida[:, -3:] / PESO_COLOR - tray, axis=1)))
+
+
 def analizar_bandeja(d: np.ndarray, comida: np.ndarray, fondo: np.ndarray, f_ref: float) -> tuple[np.ndarray, float, float]:
-    """(máscara de comida, % restante, confianza)."""
+    """(máscara de comida, % restante, confianza).
+
+    Una zona cuenta como comida si su prototipo más parecido es de comida Y además su color se aleja del color de la
+    bandeja: así las manchas de salsa, migas y la grasa que quedan donde ya se comió no cuentan como comida.
+    Todo sale de los prototipos de la referencia, por eso el celular aplica la misma regla sin conexión.
+    """
     es_comida, confianza = clasificar(d, comida, fondo)
-    es_comida = alisar(es_comida)
+    lejos_de_bandeja = np.linalg.norm(d[:, -3:] / PESO_COLOR - color_bandeja(fondo), axis=1) > umbral_color(comida, fondo)
+    es_comida = alisar(es_comida & lejos_de_bandeja)
     restante = float(min(100.0, 100.0 * es_comida.mean() / f_ref)) if f_ref > 0 else 0.0
     return es_comida, restante, confianza
 
