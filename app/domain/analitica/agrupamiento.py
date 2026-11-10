@@ -17,10 +17,11 @@ from sklearn.preprocessing import StandardScaler
 
 MIN_PLATOS = 4
 MIN_REGISTROS = 2000        # registros (fecha × turno × plato) mínimos para agrupar
+MIN_VECES_PLATO = 5         # un plato servido menos veces (pruebas, altas recientes) no tiene historial para juzgarlo
 
 
 def calcular(filas_menus: list[dict], hoy: str, desperdicio: Callable[[], dict[str, float]], fuente_ok: Callable[[], bool],
-             min_registros: int = MIN_REGISTROS, min_platos: int = MIN_PLATOS) -> dict:
+             min_registros: int = MIN_REGISTROS, min_platos: int = MIN_PLATOS, min_veces: int = MIN_VECES_PLATO) -> dict:
     acum: dict[str, dict] = defaultdict(lambda: {"veces": 0, "cupo": 0, "apartadas": 0})
     registros = 0
     for x in filas_menus:
@@ -29,9 +30,11 @@ def calcular(filas_menus: list[dict], hoy: str, desperdicio: Callable[[], dict[s
             a = acum[x["platoId"]]
             a["veces"] += 1; a["cupo"] += x["cupo"]; a["apartadas"] += x["apartadas"]
     desp = desperdicio()
-    platos = sorted(acum)
+    todos = sorted(acum)
+    platos = [p for p in todos if acum[p]["veces"] >= min_veces] or todos
     base = {"platos": len(platos), "minimo": min_platos, "fuenteOk": fuente_ok(),
-            "registros": registros, "minimoRegistros": min_registros}
+            "registros": registros, "minimoRegistros": min_registros,
+            "platosOmitidos": len(todos) - len(platos), "minimoVeces": min_veces}
     if registros < min_registros:
         return {**base, "suficiente": False,
                 "mensaje": f"Se necesitan al menos {min_registros} registros de menús servidos para agrupar; hay {registros}."}
