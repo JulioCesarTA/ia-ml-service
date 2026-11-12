@@ -31,11 +31,11 @@ jobs:
           echo "DOCKER_CONFIG=$DC" >> "$GITHUB_ENV"
 
       - name: Login en ECR
-        run: aws ecr get-login-password | docker login --username AWS --password-stdin 483549541027.dkr.ecr.us-west-2.amazonaws.com
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin 006419716393.dkr.ecr.us-west-2.amazonaws.com
 
       - name: Construir y subir la imagen
         run: |
-          IMG=483549541027.dkr.ecr.us-west-2.amazonaws.com/comedor/ia-ml-service
+          IMG=006419716393.dkr.ecr.us-west-2.amazonaws.com/comedor/ia-ml-service
           docker build -t $IMG:latest .
           docker push $IMG:latest
 
